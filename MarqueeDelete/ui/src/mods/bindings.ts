@@ -4,6 +4,8 @@ import { ColorPaletteData, DEFAULT_COLOR_PALETTE } from "./color-palette";
 const GROUP = "marqueedelete";
 
 export const canUse$ = bindValue<boolean>(GROUP, "canUse", false);
+export const roadFacilityMode$ = bindValue<number>(GROUP, "roadFacilityMode", 0);
+export const roadFacilitiesBusy$ = bindValue<boolean>(GROUP, "roadFacilitiesBusy", false);
 export const active$ = bindValue<boolean>(GROUP, "active", false);
 export const dragging$ = bindValue<boolean>(GROUP, "dragging", false);
 export const pending$ = bindValue<boolean>(GROUP, "pending", false);
@@ -136,6 +138,10 @@ export function toggleTool(): void {
 
 export function setSelectionMode(mode: number): void {
     trigger(GROUP, "setSelectionMode", mode);
+}
+
+export function toggleRoadFacilityMode(mode: number): void {
+    trigger(GROUP, "toggleRoadFacilityMode", mode);
 }
 
 export function cycleSelectionMode(): void {

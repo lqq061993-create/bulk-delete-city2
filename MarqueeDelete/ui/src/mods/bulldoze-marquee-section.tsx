@@ -6,6 +6,9 @@ import { useLocalization } from "cs2/l10n";
 import { Button, Tooltip } from "cs2/ui";
 import {
     active$,
+    compatCanSubmit$,
+    roadFacilityMode$,
+    roadFacilitiesBusy$,
     applyFilterPreset,
     cancelImportantModal,
     cancelUndo,
@@ -38,6 +41,7 @@ import {
     stopUndo,
     switchFromBulldoze,
     togglePickSimilar,
+    toggleRoadFacilityMode,
     undoCountAreas$,
     undoCountBuildings$,
     undoCountDecals$,
@@ -860,15 +864,23 @@ function ImpactReportCard(props: {
     );
 }
 
+function roadFacilityLabel(mode: number, t: (id: string, fallback: string) => string): string {
+    return mode === 1
+        ? t("MarqueeDelete.RoadTrafficLights", "Traffic lights")
+        : t("MarqueeDelete.RoadCrosswalks", "Crosswalks");
+}
+
 function MarqueeActiveCard(props: {
     underground: boolean;
     hasAnyFilter: boolean;
     hasUndergroundFilter: boolean;
     modalOpen: boolean;
+    roadFacilityMode: number;
     t: (id: string, fallback: string) => string;
 }): JSX.Element {
     const sel = useMarqueeCardState();
-    const { t, underground, hasAnyFilter, hasUndergroundFilter, modalOpen } = props;
+    const { t, underground, hasAnyFilter, hasUndergroundFilter, modalOpen, roadFacilityMode } = props;
+    const editingRoadFacilities = roadFacilityMode !== 0;
     const isZh = t("MarqueeDelete.UndoBtn", "Undo") !== "Undo";
     const focusDisabledKey = vanillaRefs.FOCUS_DISABLED;
     const FocusDisabledComp = vanillaRefs.FocusDisabled;
@@ -917,7 +929,7 @@ function MarqueeActiveCard(props: {
     if (sel.counts.networks > 0) {
         breakdownItems.push({
             key: "networks",
-            label: t("MarqueeDelete.FilterNetworks", "Roads/Nets"),
+            label: editingRoadFacilities ? roadFacilityLabel(roadFacilityMode, t) : t("MarqueeDelete.FilterNetworks", "Roads/Nets"),
             count: sel.counts.networks,
         });
     }
@@ -978,6 +990,17 @@ function MarqueeActiveCard(props: {
     const selectionNoticeBanner = (() => {
         if (!sel.notice) {
             return null;
+        }
+        if (sel.notice === "facility_running") {
+            return <div className={styles.infoHintBanner}><span>{t(
+                "MarqueeDelete.RoadFacilityRunning", "Applying junction changes. Press Esc to stop."
+            )}</span></div>;
+        }
+        if (sel.notice.startsWith("facility_result|")) {
+            const [, submitted, skipped] = sel.notice.split("|");
+            return <div className={styles.infoHintBanner}><span>{t(
+                "MarqueeDelete.RoadFacilityResult", "Submitted {0} changes. {1} were skipped or stopped."
+            ).replace("{0}", submitted).replace("{1}", skipped)}</span></div>;
         }
         if (sel.notice === "protected") {
             return (
@@ -1214,7 +1237,7 @@ function MarqueeActiveCard(props: {
         ) : null;
 
     const hasInterruptedDeletion = sel.interruptedDeletionCount > 0;
-    const directDelete = !sel.confirm && !hasInterruptedDeletion;
+    const directDelete = !editingRoadFacilities && !sel.confirm && !hasInterruptedDeletion;
 
     React.useEffect(() => {
         if (!hasPending || sel.dragging || modalOpen) {
@@ -1244,7 +1267,9 @@ function MarqueeActiveCard(props: {
         window.addEventListener("keydown", onKeyDown, true);
         return () => window.removeEventListener("keydown", onKeyDown, true);
     }, [hasPending, sel.dragging, modalOpen, sel.compatCanSubmit, directDelete, sel.undo.busy, sel.notice]);
-    const idleCompactHint = directDelete
+    const idleCompactHint = editingRoadFacilities
+        ? t("MarqueeDelete.RoadFacilitySelectHint", "Draw around the feature you want to remove.")
+        : directDelete
         ? t(
               "MarqueeDelete.HintConfirmOffIdle",
               "Confirm OFF: Drag and release to delete directly (no secondary confirmation)"
@@ -1539,6 +1564,12 @@ function MarqueeActiveCard(props: {
                         </div>
                     )}
                     {selectionNoticeBanner}
+                    {editingRoadFacilities && (
+                        <div className={styles.infoHintBanner}><span>{t(
+                            "MarqueeDelete.RoadFacilityConfirmHint",
+                            "This changes road settings. Use Road Services to restore the feature."
+                        )}</span></div>
+                    )}
                     {!sel.undo.busy && sel.notice !== "protected" &&
                         (!hasInterruptedDeletion || sel.reviewingInterruptedDeletion) && (
                         <div className={styles.primaryAction}>
@@ -1560,13 +1591,15 @@ function MarqueeActiveCard(props: {
                                     className={styles.confirmBtn}
                                     onSelect={confirmDelete}
                                 >
-                                    {t("MarqueeDelete.ConfirmBtn", "Confirm deletion")} ({sel.count}) [Enter]
+                                    {editingRoadFacilities
+                                        ? t("MarqueeDelete.RoadFacilityConfirm", "Remove {0}").replace("{0}", roadFacilityLabel(roadFacilityMode, t))
+                                        : t("MarqueeDelete.ConfirmBtn", "Confirm deletion")} ({sel.count}) [Enter]
                                 </Button>
                             )}
                         </div>
                     )}
                     <div className={styles.actionsRow}>
-                        {!sel.undo.busy && !sel.reviewingInterruptedDeletion && (
+                        {!editingRoadFacilities && !sel.undo.busy && !sel.reviewingInterruptedDeletion && (
                             <Tooltip
                                 tooltip={renderRichTooltip(
                                     t("MarqueeDelete.PickSimilarBtn", "Match Same"),
@@ -1605,7 +1638,7 @@ function MarqueeActiveCard(props: {
                         >
                             {t("MarqueeDelete.ClearBtn", "Clear")} [Esc]
                         </Button>
-                        <Tooltip
+                        {!editingRoadFacilities && <Tooltip
                             tooltip={renderRichTooltip(
                                 t("MarqueeDelete.ImpactReportBtn", "Impact Report"),
                                 t("MarqueeDelete.DescImpactReport", "View grouped prefab impact breakdown before deleting.")
@@ -1620,7 +1653,7 @@ function MarqueeActiveCard(props: {
                             >
                                 {t("MarqueeDelete.ImpactReportBtn", "Impact Report")}
                             </Button>
-                        </Tooltip>
+                        </Tooltip>}
                         {!sel.undo.inProgress && !sel.undo.busy && sel.undo.canUndo && (
                             !sel.compatCanUndo ? (
                                 <Tooltip
@@ -1682,12 +1715,18 @@ export function BulldozeMarqueeSection(): JSX.Element {
     const palette = useColorPalette();
     const colorModalOpen = useColorModalOpen();
     const importantModalOpen = useValue(importantModalOpen$);
+    const roadFacilityMode = useValue(roadFacilityMode$);
+    const roadFacilitiesBusy = useValue(roadFacilitiesBusy$);
+    const editingRoadFacilities = roadFacilityMode !== 0;
+    const compatCanSubmit = useValue(compatCanSubmit$);
+    const canChooseRoadFacilities = state.active && !state.underground && compatCanSubmit;
     const { translate } = useLocalization();
     const [netSubOpen, setNetSubOpen] = React.useState(false);
     const [modeInfoOpen, setModeInfoOpen] = React.useState(false);
     const [activeTab, setActiveTab] = React.useState<"targets" | "presets" | "options">("targets");
 
     const handleCategoryClick = (key: string, enabled: boolean, e?: any) => {
+        if (editingRoadFacilities) return;
         const isAlt = (e && (e.altKey || e.nativeEvent?.altKey)) || (typeof window !== "undefined" && (window.event as any)?.altKey);
         if (isAlt) {
             soloFilter(key);
@@ -1725,7 +1764,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
         !state.filters.areas &&
         !state.filters.moving;
 
-    const hasAnyFilter = !noneEnabled;
+    const hasAnyFilter = editingRoadFacilities || !noneEnabled;
     const hasUndergroundFilter = state.filters.networks || state.filters.moving;
     const focusDisabledKey = vanillaRefs.FOCUS_DISABLED;
     const allNetSubEnabled =
@@ -2235,6 +2274,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
                     <SectionWrapper title={t("MarqueeDelete.FiltersLabel", "Assets")}>
                         <ModeToolButton
                             selected={allEnabled}
+                            disabled={editingRoadFacilities}
                             src={STAR_ALL_ICON}
                             tooltipTitle={t("MarqueeDelete.SelectAllBtn", "All")}
                             tooltipDesc={t("MarqueeDelete.DescSelectAll", "Toggle all target asset categories on or restore defaults.")}
@@ -2242,6 +2282,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
                         />
                         <ModeToolButton
                             selected={noneEnabled}
+                            disabled={editingRoadFacilities}
                             src={clearFiltersIconUrl}
                             tooltipTitle={t("MarqueeDelete.ClearAllFiltersBtn", "Clear All")}
                             tooltipDesc={t("MarqueeDelete.DescClearAllFilters", "Disable all building zone and asset category filters so you can pick a single category cleanly.")}
@@ -2251,6 +2292,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
                             <ModeToolButton
                                 key={spec.key}
                                 selected={spec.enabled}
+                                disabled={editingRoadFacilities}
                                 src={spec.icon}
                                 tooltipTitle={t(spec.labelId, spec.fallback)}
                                 tooltipDesc={`${t(spec.descId, spec.descFallback)} (${t("MarqueeDelete.SoloCategoryHint", "Alt+Click: Solo this category")})`}
@@ -2279,7 +2321,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
 
                     {netSubOpen && (
                         <div className={styles.netSubPanel}>
-                            <div className={`${styles.netSubRow} ${!state.filters.networks ? styles.netSubDimmed : ""}`}>
+                            <div className={`${styles.netSubRow} ${!state.filters.networks || editingRoadFacilities ? styles.netSubDimmed : ""}`}>
                                 {netSubSpecs.map((spec) => (
                                     <Tooltip
                                         key={spec.key}
@@ -2289,6 +2331,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
                                         <Button
                                             variant="flat"
                                             focusKey={focusDisabledKey}
+                                            disabled={editingRoadFacilities}
                                             className={`${styles.netSubChip} ${spec.enabled ? styles.netSubChipActive : ""}`}
                                             onSelect={() => setOption(spec.key, !spec.enabled)}
                                         >
@@ -2297,13 +2340,43 @@ export function BulldozeMarqueeSection(): JSX.Element {
                                     </Tooltip>
                                 ))}
                             </div>
-                            {!state.filters.networks && (
+                            {!state.filters.networks && !editingRoadFacilities && (
                                 <div className={styles.netSubMasterOffHint}>
                                     {t(
                                         "MarqueeDelete.NetSubMasterOffHint",
                                         "Master Networks filter is off — enable Networks above for sub-filters to match."
                                     )}
                                 </div>
+                            )}
+                            <div className={`${styles.netSubRow} ${styles.roadFacilityRow}`}>
+                                <span className={styles.roadFacilityLabel}>{t("MarqueeDelete.RoadFacilities", "Junction features")}</span>
+                                {[1, 2].map((mode) => (
+                                    <Tooltip
+                                        key={mode}
+                                        tooltip={renderRichTooltip(
+                                            roadFacilityLabel(mode, t),
+                                            mode === 1
+                                                ? t("MarqueeDelete.RoadTrafficLightsTip", "Select signalized junctions and remove their traffic lights.")
+                                                : t("MarqueeDelete.RoadCrosswalksTip", "Select pedestrian crossings at the ends of roads.")
+                                        )}
+                                        delayTime={0}
+                                    >
+                                        <Button
+                                            variant="flat"
+                                            focusKey={focusDisabledKey}
+                                            disabled={!canChooseRoadFacilities || state.dragging || state.undo.busy || roadFacilitiesBusy}
+                                            className={`${styles.netSubChip} ${roadFacilityMode === mode ? styles.netSubChipActive : ""}`}
+                                            onSelect={() => toggleRoadFacilityMode(mode)}
+                                        >
+                                            {roadFacilityLabel(mode, t)}
+                                        </Button>
+                                    </Tooltip>
+                                ))}
+                            </div>
+                            {!canChooseRoadFacilities && (
+                                <div className={styles.netSubMasterOffHint}>{t(
+                                    "MarqueeDelete.RoadFacilityAvailability", "Junction features require Bulk Delete in surface view on a verified game build."
+                                )}</div>
                             )}
                         </div>
                     )}
@@ -2495,6 +2568,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
                     hasAnyFilter={hasAnyFilter}
                     hasUndergroundFilter={hasUndergroundFilter}
                     modalOpen={colorModalOpen || importantModalOpen}
+                    roadFacilityMode={roadFacilityMode}
                     t={t}
                 />
             )}

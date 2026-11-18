@@ -130,6 +130,8 @@ namespace MarqueeDelete
         private ValueBinding<int> m_ShapeOriginalVertexCountBinding;
         private ValueBinding<bool> m_ShapeSimplifiedBinding;
         private ValueBinding<int> m_SelectionModeBinding;
+        private ValueBinding<int> m_RoadFacilityModeBinding;
+        private ValueBinding<bool> m_RoadFacilitiesBusyBinding;
         private ValueBinding<int> m_PolygonVertexCountBinding;
         private ValueBinding<bool> m_PolygonSnapActiveBinding;
         private ValueBinding<bool> m_PolygonVertexLimitReachedBinding;
@@ -272,6 +274,8 @@ namespace MarqueeDelete
             AddBinding(m_ShapeOriginalVertexCountBinding = new ValueBinding<int>(Group, "shapeOriginalVertexCount", 0));
             AddBinding(m_ShapeSimplifiedBinding = new ValueBinding<bool>(Group, "shapeSimplified", false));
             AddBinding(m_SelectionModeBinding = new ValueBinding<int>(Group, "selectionMode", 0));
+            AddBinding(m_RoadFacilityModeBinding = new ValueBinding<int>(Group, "roadFacilityMode", 0));
+            AddBinding(m_RoadFacilitiesBusyBinding = new ValueBinding<bool>(Group, "roadFacilitiesBusy", false));
             AddBinding(m_PolygonVertexCountBinding = new ValueBinding<int>(Group, "polygonVertexCount", 0));
             AddBinding(m_PolygonSnapActiveBinding = new ValueBinding<bool>(Group, "polygonSnapActive", false));
             AddBinding(m_PolygonVertexLimitReachedBinding = new ValueBinding<bool>(Group, "polygonVertexLimitReached", false));
@@ -332,6 +336,7 @@ namespace MarqueeDelete
             AddBinding(new TriggerBinding(Group, "switchFromBulldoze", OnSwitchFromBulldoze));
             AddBinding(new TriggerBinding(Group, "toggleUnderground", OnToggleUnderground));
             AddBinding(new TriggerBinding<int>(Group, "setSelectionMode", OnSetSelectionMode));
+            AddBinding(new TriggerBinding<int>(Group, "toggleRoadFacilityMode", OnToggleRoadFacilityMode));
             AddBinding(new TriggerBinding(Group, "cycleSelectionMode", OnCycleSelectionMode));
             AddBinding(new TriggerBinding(Group, "confirm", OnConfirm));
             AddBinding(new TriggerBinding(Group, "clear", OnClear));
@@ -513,7 +518,7 @@ namespace MarqueeDelete
             colorModalOpen = canUse && m_Tool != null && m_Tool.ColorModalOpen;
             SelectiveUndoUiSnapshot undoUi = m_Tool != null ? m_Tool.GetUndoUiSnapshot() : default(SelectiveUndoUiSnapshot);
 
-            bool canTriggerUndo = m_Tool != null && MarqueePointerLogic.CanTriggerUndo(
+            bool canTriggerUndo = m_Tool != null && !m_Tool.IsEditingRoadFacilities && MarqueePointerLogic.CanTriggerUndo(
                 canUseMod: canUse,
                 allowInput: allowInput,
                 pointerIdle: !pointerBusy,
@@ -766,6 +771,13 @@ namespace MarqueeDelete
             m_Tool.SetUnderground(!m_Tool.EffectiveUnderground);
             m_Dirty = true;
             SyncBindings();
+        }
+
+        private void OnToggleRoadFacilityMode(int mode)
+        {
+            if (m_Tool != null && CanUseTool() && (mode == 1 || mode == 2) &&
+                m_Tool.ToggleRoadFacilityMode((RoadFacilityMode)mode))
+                SyncBindings();
         }
 
         private void OnSetSelectionMode(int rawMode)
@@ -1324,6 +1336,8 @@ namespace MarqueeDelete
             bool freehandDrawing = active && m_Tool.IsFreehandDrawing;
             bool shapeInvalid = active && m_Tool.LastClosedShapeInvalid;
             m_SelectionModeBinding.Update(selectionMode);
+            m_RoadFacilityModeBinding.Update(active ? (int)m_Tool.FacilityMode : 0);
+            m_RoadFacilitiesBusyBinding.Update(active && m_Tool.RoadFacilitiesBusy);
             m_PolygonVertexCountBinding.Update(polygonVertexCount);
             m_PolygonSnapActiveBinding.Update(polygonSnapActive);
             m_PolygonVertexLimitReachedBinding.Update(polygonVertexLimitReached);
@@ -1455,7 +1469,7 @@ namespace MarqueeDelete
             m_UndoIncludePropsBinding.Update((undoMaskUi & UndoAssetMask.Props) != 0);
             m_UndoIncludeDecalsBinding.Update((undoMaskUi & UndoAssetMask.Decals) != 0);
 
-            bool canUndo = canUse && undoUi.CanUndo && !m_Tool.HasQueuedDeletion;
+            bool canUndo = canUse && undoUi.CanUndo && !m_Tool.HasQueuedDeletion && !m_Tool.IsEditingRoadFacilities;
             bool undoInProgress = canUse && undoUi.IsInProgress;
             bool undoBusy = canUse && undoUi.HasActiveUndo;
             int undoNext = canUse ? undoUi.NextCount : 0;

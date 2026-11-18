@@ -237,7 +237,7 @@ namespace MarqueeDelete
         public bool Underground => m_Underground;
         public bool IsBulldozeActive => m_ToolSystem != null && m_BulldozeToolSystem != null && m_ToolSystem.activeTool == m_BulldozeToolSystem;
         public bool HasPending => !m_Dragging && m_PendingResult != null && m_PendingResult.Count > 0;
-        public bool HasQueuedDeletion => m_QueuedDeletion != null || m_BatchedDeletion != null;
+        public bool HasQueuedDeletion => m_QueuedDeletion != null || m_BatchedDeletion != null || RoadFacilitiesBusy;
         public int InterruptedDeletionCount => m_InterruptedDeletion == null
             ? 0 : m_InterruptedDeletion.Items.Count + m_InterruptedDeletion.Nodes.Count;
 
@@ -264,7 +264,7 @@ namespace MarqueeDelete
 
         public bool TogglePickSimilar()
         {
-            if (IsReviewingInterruptedDeletion) return false;
+            if (IsReviewingInterruptedDeletion || IsEditingRoadFacilities) return false;
             if (m_Session.HasPolygonDraft)
             {
                 m_Session.PickSimilarArmed = false;
@@ -535,6 +535,11 @@ namespace MarqueeDelete
 
             bool changed = m_Underground != underground;
             m_Underground = underground;
+            if (underground && IsEditingRoadFacilities)
+            {
+                FacilityMode = RoadFacilityMode.None;
+                ClearPending();
+            }
             if (m_BulldozeToolSystem != null)
             {
                 m_BulldozeToolSystem.underground = underground;
@@ -634,6 +639,7 @@ namespace MarqueeDelete
 
         protected override void OnGamePreload(Purpose purpose, GameMode mode)
         {
+            FacilityMode = RoadFacilityMode.None;
             ColorModalOpen = false;
             m_EscapeGate.Reset();
             m_Session.CancelActiveInteraction();
@@ -667,6 +673,7 @@ namespace MarqueeDelete
 
         protected override void OnStopRunning()
         {
+            FacilityMode = RoadFacilityMode.None;
             m_Session.CancelActiveInteraction();
             m_Session.PickSimilarArmed = false;
             m_PresetViewTracker.Reset();
@@ -803,6 +810,7 @@ namespace MarqueeDelete
 
         public void ClearPending()
         {
+            m_FacilityBatch = null;
             PauseDeletion("stopped");
             m_PreviewResult = null;
             m_QueuedDeletion = null;
@@ -870,7 +878,7 @@ namespace MarqueeDelete
 
         public void ReevaluatePending()
         {
-            if (Mod.Settings == null) return;
+            if (Mod.Settings == null || IsEditingRoadFacilities) return;
             if (m_BatchedDeletion != null)
             {
                 PauseDeletion("stopped");
@@ -920,8 +928,10 @@ namespace MarqueeDelete
         }
 
         private SelectionResult Collect(MarqueeShapeXZ shape, bool includeCascade, IReadOnlyCollection<Entity> excluded = null) =>
-            SelectionCollector.Collect(World, EntityManager, shape, Mod.Settings.BuildFilterMask(),
-                Mod.Settings.BuildSafetyOptions(), m_Underground, includeCascade, excluded);
+            IsEditingRoadFacilities
+                ? RoadFacilities.Collect(World, EntityManager, in shape, FacilityMode)
+                : SelectionCollector.Collect(World, EntityManager, shape, Mod.Settings.BuildFilterMask(),
+                    Mod.Settings.BuildSafetyOptions(), m_Underground, includeCascade, excluded);
 
         private string BuildImportantListRaw(SelectionResult res)
         {
@@ -968,7 +978,7 @@ namespace MarqueeDelete
                 importantModalOpen: m_ImportantModalOpen,
                 colorModalOpen: ColorModalOpen,
                 hasActiveDraft: m_Session.HasPolygonDraft || m_Session.FreehandDrawing,
-                hasQueuedDeletion: m_QueuedDeletion != null || m_BatchedDeletion != null,
+                hasQueuedDeletion: HasQueuedDeletion,
                 historyCount: m_SelectionHistory.Count);
         }
 
@@ -1113,6 +1123,13 @@ namespace MarqueeDelete
                         m_PendingAuditLog.Extra);
                     m_PendingAuditLog = null;
                 }
+            }
+
+            if (RoadFacilitiesBusy)
+            {
+                inputDeps.Complete();
+                AdvanceRoadFacilities();
+                return inputDeps;
             }
 
             if (m_BatchedDeletion != null)
@@ -1568,6 +1585,13 @@ namespace MarqueeDelete
 
             m_LastClosedShapeInvalid = false;
             SelectionResult finalResult = Collect(shape, includeCascade: true);
+            if (finalResult.FacilityTargets != null)
+            {
+                SetPending(finalResult);
+                if (HasPending) PlayUiSound(selectEntity: true);
+                return true;
+            }
+
             if (SelectionRestoreExecutionPolicy.ShouldExecuteAutoDelete(
                     allowAutoDelete,
                     finalResult.EffectiveCount,
@@ -1602,6 +1626,12 @@ namespace MarqueeDelete
 
         private void SubmitConfirmedDeletion(SelectionResult reviewed)
         {
+            if (reviewed.FacilityTargets != null)
+            {
+                ConfirmRoadFacilities(reviewed);
+                return;
+            }
+
             Settings settings = Mod.Settings;
             var current = SelectionCollector.Revalidate(World, EntityManager, reviewed, reviewed.Items,
                 settings.BuildFilterMask(), settings.BuildSafetyOptions(), m_Underground, reviewed.DeferredNodes);
@@ -2313,7 +2343,7 @@ namespace MarqueeDelete
 
         public bool RequestUndo()
         {
-            if (m_Dragging || HasQueuedDeletion)
+            if (m_Dragging || HasQueuedDeletion || IsEditingRoadFacilities)
             {
                 return false;
             }
@@ -2530,7 +2560,7 @@ namespace MarqueeDelete
 
         private void HandleSingleClickAdd(Entity pickedEntity)
         {
-            if (Mod.Settings == null || HasActiveUndo || m_ImportantModalOpen ||
+            if (IsEditingRoadFacilities || Mod.Settings == null || HasActiveUndo || m_ImportantModalOpen ||
                 IsReviewingInterruptedDeletion || pickedEntity == Entity.Null)
             {
                 return;
@@ -2558,7 +2588,7 @@ namespace MarqueeDelete
 
         private void HandleSingleClickRemove(Entity pickedEntity)
         {
-            if (HasActiveUndo || m_ImportantModalOpen || !HasPending ||
+            if (IsEditingRoadFacilities || HasActiveUndo || m_ImportantModalOpen || !HasPending ||
                 IsReviewingInterruptedDeletion || pickedEntity == Entity.Null)
             {
                 return;
@@ -2900,6 +2930,7 @@ namespace MarqueeDelete
 
                 DrawBuildingOverlays(ref buffer, CurrentResult, pulse, in colors);
                 DrawAssetOverlays(ref buffer, in colors);
+                DrawRoadFacilityMarkers(ref buffer, CurrentResult, in colors);
             }
             finally
             {

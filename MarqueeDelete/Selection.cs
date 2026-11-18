@@ -50,12 +50,14 @@ namespace MarqueeDelete
         internal int RawHits;
         public SelectionBreakdown Breakdown;
         internal DeletionPlan Plan;
+        internal RoadFacilityMode FacilityMode;
+        internal List<RoadFacilityTarget> FacilityTargets;
         internal bool AffectsProtectedObject;
         internal SafetyOptions Safety;
         public int CascadeTotalCount => Plan?.Affected.Count ?? 0;
         public MarqueeShapeXZ Shape;
 
-        public int Count => Entities.Count;
+        public int Count => FacilityTargets == null ? Entities.Count : Breakdown.Networks;
         public int EffectiveCount => System.Math.Max(Count, CascadeTotalCount);
 
         internal bool HasRetainedEdits =>

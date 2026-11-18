@@ -72,10 +72,26 @@ namespace MarqueeDelete.Tests
             TestBatch5bFreehandScanlineAndAllModeTransitions();
             TestHotkeyBindingsLocalizationAndUiIcons();
             TestBatch6aPresetsNetSubfiltersAndMatchSimilar();
+            TestRoadFacilitySelection();
             TestBatch7PureLogicHistoryImpactSoloAndGates();
 
             Console.WriteLine($"Unit tests finished: passed={s_Passed}, failed={s_Failed}");
             return s_Failed == 0 ? 0 : 1;
+        }
+
+        private static void TestRoadFacilitySelection()
+        {
+            var shape = MarqueeShapeXZ.FromPoints(new CoordXZ(-1, -1), new CoordXZ(1, 1), default, false);
+            AssertEqual(RoadFacilitySide.Left, RoadFacilityPolicy.CrosswalkSlot(in shape, new CoordXZ(0, 0), true, true),
+                "A visible, inverted crossing selects the left upgrade slot");
+            AssertEqual(RoadFacilitySide.Right, RoadFacilityPolicy.CrosswalkSlot(in shape, new CoordXZ(0, 0), true, false),
+                "A visible, non-inverted crossing selects the right upgrade slot");
+            AssertEqual(RoadFacilitySide.None, RoadFacilityPolicy.CrosswalkSlot(in shape, new CoordXZ(80, 0), true, false),
+                "One road endpoint in the selection keeps the opposite crossing outside the box");
+            AssertEqual(RoadFacilitySide.None, RoadFacilityPolicy.CrosswalkSlot(in shape, new CoordXZ(0, 0), false, false),
+                "An endpoint without a visible crosswalk cannot gain a removal override");
+            AssertEqual(0x101u, RoadFacilityPolicy.WithRemovalOverride(0x81u, 0x80u, 0x100u),
+                "An explicit removal override clears its opposite and preserves unrelated upgrades");
         }
 
         private static void TestUndoBatchPolicy()

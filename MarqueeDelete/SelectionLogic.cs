@@ -44,6 +44,34 @@ namespace MarqueeDelete
         Other = 5,
     }
 
+    internal enum RoadFacilityMode : byte
+    {
+        None,
+        TrafficLights,
+        Crosswalks,
+    }
+
+    [Flags]
+    internal enum RoadFacilitySide : byte
+    {
+        None = 0,
+        Left = 1,
+        Right = 2,
+    }
+
+    internal static class RoadFacilityPolicy
+    {
+        internal static RoadFacilitySide CrosswalkSlot(
+            in MarqueeShapeXZ shape, CoordXZ position, bool present, bool inverted)
+        {
+            if (!present || !shape.ContainsPoint(position)) return RoadFacilitySide.None;
+            return inverted ? RoadFacilitySide.Left : RoadFacilitySide.Right;
+        }
+
+        internal static uint WithRemovalOverride(uint flags, uint addFlag, uint removeFlag) =>
+            (flags & ~addFlag) | removeFlag;
+    }
+
     [Flags]
     public enum SelectionFilterMask
     {
