@@ -70,6 +70,9 @@ namespace MarqueeDelete
 
         internal static uint WithRemovalOverride(uint flags, uint addFlag, uint removeFlag) =>
             (flags & ~addFlag) | removeFlag;
+
+        internal static bool IsIndependentCrosswalk(bool intersection, bool medianBreak, bool hasSignals, int compatibleTwoWayRoads) =>
+            intersection && !medianBreak && (!hasSignals || compatibleTwoWayRoads >= 3);
     }
 
     [Flags]

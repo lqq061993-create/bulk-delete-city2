@@ -109,9 +109,12 @@ namespace MarqueeDelete
 
                 var edge = em.GetComponentData<Edge>(entity);
                 var composition = em.GetComponentData<Composition>(entity);
-                var start = FindCrosswalk(em, edge.m_Start, composition.m_StartNode,
+                var prefab = em.GetComponentData<PrefabRef>(entity).m_Prefab;
+                if (!em.HasComponent<NetGeometryData>(prefab)) return false;
+                Layer layers = em.GetComponentData<NetGeometryData>(prefab).m_MergeLayers;
+                var start = FindCrosswalk(em, edge.m_Start, composition.m_StartNode, layers,
                     em.GetComponentData<StartNodeGeometry>(entity).m_Geometry, in shape, out var startSlot);
-                var end = FindCrosswalk(em, edge.m_End, composition.m_EndNode,
+                var end = FindCrosswalk(em, edge.m_End, composition.m_EndNode, layers,
                     em.GetComponentData<EndNodeGeometry>(entity).m_Geometry, in shape, out var endSlot);
                 if (!start.Selected && !end.Selected) return false;
                 // Custom geometries that map both ends onto the same upgrade bit cannot be edited independently.
@@ -126,7 +129,7 @@ namespace MarqueeDelete
         }
 
         private static RoadFacilitySite FindCrosswalk(
-            EntityManager em, Entity node, Entity composition, EdgeNodeGeometry geometry,
+            EntityManager em, Entity node, Entity composition, Layer mergeLayers, EdgeNodeGeometry geometry,
             in MarqueeShapeXZ shape, out RoadFacilitySide endpointSlot)
         {
             endpointSlot = RoadFacilitySide.None;
@@ -139,17 +142,33 @@ namespace MarqueeDelete
                 em.GetBuffer<NetCompositionCrosswalk>(composition, true).Length == 0)
                 return default;
 
-            // Junction crossings start on the edge-facing side of the node geometry.
-            // A through-road crossing can use the inner end of the same curves.
-            var left = geometry.m_Left.m_Left;
-            var right = geometry.m_Right.m_Right;
-            bool atJunction = (flags & CompositionFlags.General.Intersection) != 0;
-            float3 position = atJunction ? (left.a + right.a) * 0.5f : (left.d + right.d) * 0.5f;
+            float3 position = (geometry.m_Left.m_Left.a + geometry.m_Right.m_Right.a) * 0.5f;
             var side = RoadFacilityPolicy.CrosswalkSlot(in shape, new CoordXZ(position.x, position.z), true, inverted);
             if (side == RoadFacilitySide.None || !IsEditableJunction(em, node, requireSignals: false)) return default;
-            // At a two-arm pedestrian crossing the game can derive the traffic lights from the crossing itself.
-            if (em.HasComponent<TrafficLights>(node) && em.GetBuffer<ConnectedEdge>(node, true).Length <= 2) return default;
+            bool hasSignals = em.HasComponent<TrafficLights>(node);
+            int twoWayRoads = hasSignals ? CountTwoWayRoadApproaches(em, node, mergeLayers) : 0;
+            if (!RoadFacilityPolicy.IsIndependentCrosswalk((flags & CompositionFlags.General.Intersection) != 0,
+                    (flags & CompositionFlags.General.MedianBreak) != 0, hasSignals, twoWayRoads))
+                return default;
             return new RoadFacilitySite { Node = node, Side = side, Position = position };
+        }
+
+        private static int CountTwoWayRoadApproaches(EntityManager em, Entity node, Layer mergeLayers)
+        {
+            const Game.Prefabs.RoadFlags oneWay =
+                Game.Prefabs.RoadFlags.DefaultIsForward | Game.Prefabs.RoadFlags.DefaultIsBackward;
+            int count = 0;
+            foreach (var connection in em.GetBuffer<ConnectedEdge>(node, true))
+            {
+                Entity edge = connection.m_Edge;
+                if (!em.HasComponent<Road>(edge) || !IsEditable(em, edge)) continue;
+                Entity prefab = em.GetComponentData<PrefabRef>(edge).m_Prefab;
+                if (em.HasComponent<RoadData>(prefab) && em.HasComponent<NetGeometryData>(prefab) &&
+                    (em.GetComponentData<RoadData>(prefab).m_Flags & oneWay) == 0 &&
+                    (em.GetComponentData<NetGeometryData>(prefab).m_MergeLayers & mergeLayers) != 0)
+                    count++;
+            }
+            return count;
         }
 
         private static bool IsEditableJunction(EntityManager em, Entity node, bool requireSignals)

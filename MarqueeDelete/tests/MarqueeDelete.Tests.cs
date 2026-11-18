@@ -92,6 +92,14 @@ namespace MarqueeDelete.Tests
                 "An endpoint without a visible crosswalk cannot gain a removal override");
             AssertEqual(0x101u, RoadFacilityPolicy.WithRemovalOverride(0x81u, 0x80u, 0x100u),
                 "An explicit removal override clears its opposite and preserves unrelated upgrades");
+            AssertTrue(!RoadFacilityPolicy.IsIndependentCrosswalk(false, false, false, 2),
+                "A shared mid-block crossing cannot be planned as one independent road end");
+            AssertTrue(!RoadFacilityPolicy.IsIndependentCrosswalk(true, true, false, 3),
+                "A median-break crossing cannot be planned as one independent road end");
+            AssertTrue(!RoadFacilityPolicy.IsIndependentCrosswalk(true, false, true, 2),
+                "Paths and one-way connections cannot count as two-way road approaches for signal preservation");
+            AssertTrue(RoadFacilityPolicy.IsIndependentCrosswalk(true, false, true, 3),
+                "An ordinary signalized intersection with three compatible two-way roads supports independent removal");
         }
 
         private static void TestUndoBatchPolicy()

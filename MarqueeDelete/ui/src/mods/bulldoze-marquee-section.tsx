@@ -2357,7 +2357,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
                                             roadFacilityLabel(mode, t),
                                             mode === 1
                                                 ? t("MarqueeDelete.RoadTrafficLightsTip", "Select signalized junctions and remove their traffic lights.")
-                                                : t("MarqueeDelete.RoadCrosswalksTip", "Select pedestrian crossings at the ends of roads.")
+                                                : t("MarqueeDelete.RoadCrosswalksTip", "Select independently editable pedestrian crossings at ordinary junctions.")
                                         )}
                                         delayTime={0}
                                     >
