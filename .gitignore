@@ -1,0 +1,11 @@
+# 工作区根：版本库只登记 MarqueeDelete 项目
+# 下面是根目录的临时草稿与工作文件，不进版本库
+
+/_*.md
+/_perf_baseline.ps1
+/_perf_data/
+
+/marquee-*-review.cs
+/marquee-*-review.txt
+/verify-plugins.sh
+/verify-plugins.sh.bak*

@@ -20,3 +20,13 @@ obj/
 *.dll
 *.pdb
 *.zip
+
+# 商店发布的截图只保留 PublishConfiguration.xml 实际引用的那几张，
+# 早期拍摄的工作图不进版本库（它们不是发布配图，重拍也不影响商店）。
+/Properties/Screenshots/01-panel.png
+/Properties/Screenshots/01-tool-panel.png
+/Properties/Screenshots/02-important-building-confirmation.jpg
+/Properties/Screenshots/02-overview.jpg
+/Properties/Screenshots/03-building-footprints.jpg
+/Properties/Screenshots/03-marquee-cell-rulers.jpg
+/Properties/Screenshots/04-important-building.jpg
