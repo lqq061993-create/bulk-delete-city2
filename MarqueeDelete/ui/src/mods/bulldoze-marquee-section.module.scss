@@ -1,0 +1,2182 @@
+.toolBtnRelative {
+    position: relative;
+}
+
+.toolBtnUnselected {
+    position: relative;
+    opacity: 0.72;
+}
+
+.toolBtnDisabled {
+    position: relative;
+    opacity: 0.36;
+}
+
+.zoneColorBar {
+    position: absolute;
+    left: 4rem;
+    right: 4rem;
+    bottom: 2rem;
+    height: 3rem;
+    border-radius: 2rem;
+    pointer-events: none;
+}
+
+.zoneBarRes {
+    background-color: #22f56a;
+}
+
+.zoneBarCom {
+    background-color: #26a6ff;
+}
+
+.zoneBarInd {
+    background-color: #ffcc12;
+}
+
+.zoneBarOff {
+    background-color: #b656ff;
+}
+
+.zoneBarOther {
+    background-color: #ff7236;
+}
+
+.countBadge {
+    position: absolute;
+    top: -3rem;
+    right: -3rem;
+    min-width: 14rem;
+    height: 13rem;
+    padding: 0 3rem;
+    border-radius: 6rem;
+    background-color: rgba(228, 58, 45, 0.96);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 218, 210, 0.92);
+    color: #ffffff;
+    font-size: 9rem;
+    font-weight: 700;
+    line-height: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.toolOptionsStack {
+    display: flex;
+    flex-direction: column;
+    max-height: 60vh;
+    min-width: 0;
+}
+
+.originalToolOptions {
+    flex: 0 0 auto;
+    max-height: 22vh;
+    overflow-y: auto;
+}
+
+.marqueePanel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+}
+
+.panelHeader {
+    flex-shrink: 0;
+}
+
+.panelBody {
+    display: flex;
+    flex-direction: column;
+    flex: 0 1 auto;
+    min-height: 0;
+    min-width: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.panelBody > * {
+    flex-shrink: 0;
+}
+
+.panelSection {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4rem 12rem;
+}
+
+.sectionTitle {
+    font-size: var(--fontSizeM, 12rem);
+    font-weight: 700;
+    color: #e1ebf6;
+    margin-right: 8rem;
+    max-width: 100%;
+}
+
+.sectionControls {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    margin-left: auto;
+}
+
+.sectionControls > * {
+    margin: 2rem 0 2rem 4rem;
+}
+
+.tooltipContainer {
+    pointer-events: none !important;
+}
+
+.tooltipTitle {
+    font-size: 12rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 3rem;
+    pointer-events: none !important;
+}
+
+.tooltipDesc {
+    font-size: 11rem;
+    color: rgba(212, 224, 240, 0.92);
+    max-width: 240rem;
+    pointer-events: none !important;
+}
+
+.activeFooter {
+    display: flex;
+    flex-direction: column;
+    margin: 2rem 12rem 4rem 12rem;
+    padding-top: 6rem;
+    border-top-width: 1rem;
+    border-top-style: solid;
+    border-top-color: rgba(255, 255, 255, 0.14);
+}
+
+.idleBar {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    padding: 2rem;
+}
+
+.layerBadge {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 2rem 7rem;
+    border-radius: 4rem;
+    background-color: rgba(32, 146, 214, 0.24);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(88, 198, 255, 0.55);
+    color: #e8f6ff;
+    font-size: 10rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.layerBadgeUnderground {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 2rem 7rem;
+    border-radius: 4rem;
+    background-color: rgba(24, 168, 184, 0.28);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(76, 230, 245, 0.65);
+    color: #dffcff;
+    font-size: 10rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.statusDot {
+    width: 6rem;
+    height: 6rem;
+    border-radius: 3rem;
+    background-color: #4cc9ff;
+    margin-right: 5rem;
+    flex-shrink: 0;
+}
+
+.statusDotUnderground {
+    width: 6rem;
+    height: 6rem;
+    border-radius: 3rem;
+    background-color: #3ef0ff;
+    margin-right: 5rem;
+    flex-shrink: 0;
+}
+
+.statusDotPending {
+    width: 7rem;
+    height: 7rem;
+    border-radius: 4rem;
+    background-color: #ff6b57;
+    margin-right: 6rem;
+    flex-shrink: 0;
+}
+
+.compactHint {
+    font-size: 10rem;
+    color: rgba(196, 210, 228, 0.78);
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.summaryHeader {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    margin-bottom: 4rem;
+}
+
+.summaryHeader > * {
+    margin-bottom: 2rem;
+}
+
+.summaryLeft {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.summaryMainText {
+    font-size: 12rem;
+    font-weight: 700;
+    color: #ffffff;
+    white-space: nowrap;
+}
+
+.dimensionPill {
+    margin-left: 6rem;
+    padding: 1rem 6rem;
+    border-radius: 3rem;
+    background-color: rgba(34, 152, 224, 0.26);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(102, 206, 255, 0.65);
+    color: #dff6ff;
+    font-size: 10rem;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.cascadePill {
+    margin-left: 6rem;
+    padding: 1rem 5rem;
+    border-radius: 3rem;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: rgba(216, 228, 244, 0.88);
+    font-size: 10rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.warnPill {
+    padding: 1rem 6rem;
+    border-radius: 3rem;
+    background-color: rgba(224, 126, 28, 0.28);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 184, 92, 0.78);
+    color: #ffe2b8;
+    font-size: 10rem;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.breakdownRow {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 4rem;
+}
+
+.breakdownTag {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 2rem 6rem;
+    margin-right: 4rem;
+    margin-bottom: 3rem;
+    border-radius: 3rem;
+    background-color: rgba(24, 30, 40, 0.82);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.16);
+    color: rgba(226, 236, 248, 0.94);
+    font-size: 10rem;
+    white-space: nowrap;
+}
+
+.tagDotRes {
+    width: 6rem;
+    height: 6rem;
+    border-radius: 3rem;
+    background-color: #22f56a;
+    margin-right: 4rem;
+    flex-shrink: 0;
+}
+
+.tagDotCom {
+    width: 6rem;
+    height: 6rem;
+    border-radius: 3rem;
+    background-color: #26a6ff;
+    margin-right: 4rem;
+    flex-shrink: 0;
+}
+
+.tagDotInd {
+    width: 6rem;
+    height: 6rem;
+    border-radius: 3rem;
+    background-color: #ffcc12;
+    margin-right: 4rem;
+    flex-shrink: 0;
+}
+
+.tagDotOff {
+    width: 6rem;
+    height: 6rem;
+    border-radius: 3rem;
+    background-color: #b656ff;
+    margin-right: 4rem;
+    flex-shrink: 0;
+}
+
+.tagDotOther {
+    width: 6rem;
+    height: 6rem;
+    border-radius: 3rem;
+    background-color: #ff7236;
+    margin-right: 4rem;
+    flex-shrink: 0;
+}
+
+.breakdownTagCount {
+    margin-left: 4rem;
+    color: #6fd3ff;
+    font-weight: 700;
+}
+
+.importantWarnBanner {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3rem 8rem;
+    margin-bottom: 5rem;
+    border-radius: 4rem;
+    background-color: rgba(218, 134, 18, 0.26);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 198, 68, 0.88);
+    color: #ffeab3;
+    font-size: 10rem;
+    font-weight: 700;
+}
+
+.interruptedCard {
+    display: flex;
+    flex-direction: column;
+    padding: 6rem 8rem 2rem;
+    margin-bottom: 5rem;
+    border: 1rem solid rgba(255, 194, 106, 0.55);
+    border-radius: 5rem;
+    background-color: rgba(75, 52, 28, 0.82);
+    color: #ffe4c2;
+    font-size: 11rem;
+}
+
+.interruptedUnits {
+    margin-top: 2rem;
+    margin-bottom: 2rem;
+}
+
+.primaryAction {
+    display: flex;
+    margin-top: 3rem;
+}
+
+.actionsRow {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    margin-top: 4rem;
+}
+
+.actionsRow > * {
+    margin: 0 4rem 3rem 0;
+}
+
+.confirmBtn,
+.confirmBtnPreviewOnly {
+    width: 100%;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    min-height: 28rem;
+    padding: 4rem 10rem;
+    border-radius: 4rem;
+    background-color: rgba(208, 48, 38, 0.94);
+    background-image: linear-gradient(180deg, rgba(232, 72, 58, 0.96), rgba(178, 34, 26, 0.96));
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 158, 146, 0.88);
+    color: #ffffff;
+    font-size: 11rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    white-space: normal;
+    text-align: center;
+}
+
+.confirmBtn:hover {
+    background-color: rgba(236, 66, 54, 1);
+    background-image: linear-gradient(180deg, rgba(248, 88, 72, 1), rgba(198, 44, 34, 1));
+    border-color: rgba(255, 200, 192, 1);
+}
+
+.secondaryBtn {
+    min-height: 28rem;
+    max-width: 100%;
+    padding: 4rem 9rem;
+    border-radius: 4rem;
+    background-color: rgba(34, 39, 48, 0.92);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: rgba(236, 242, 250, 0.94);
+    font-size: 11rem;
+    font-weight: 600;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: normal;
+    text-align: center;
+}
+
+.secondaryBtn:hover {
+    background-color: rgba(54, 62, 76, 0.98);
+    border-color: rgba(255, 255, 255, 0.38);
+    color: #ffffff;
+}
+
+.edgeLabelsOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 9500;
+    pointer-events: none;
+}
+
+.edgeDimTag {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 8rem;
+    border-radius: 4rem;
+    background-color: rgba(18, 22, 30, 0.92);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 112, 92, 0.92);
+    color: #ffffff;
+    font-size: 11rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.edgeDimTagUnderground {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 8rem;
+    border-radius: 4rem;
+    background-color: rgba(14, 26, 34, 0.92);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(68, 228, 245, 0.92);
+    color: #e6fcff;
+    font-size: 11rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.edgeDimMeters {
+    margin-left: 4rem;
+    font-size: 10rem;
+    font-weight: 600;
+    color: rgba(255, 214, 206, 0.9);
+    white-space: nowrap;
+}
+
+.edgeDimMetersUnderground {
+    margin-left: 4rem;
+    font-size: 10rem;
+    font-weight: 600;
+    color: rgba(188, 242, 255, 0.9);
+    white-space: nowrap;
+}
+
+.modalBackdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 9999;
+    background-color: rgba(8, 12, 18, 0.68);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 12rem;
+    pointer-events: auto;
+}
+
+.modalCard {
+    position: relative;
+    z-index: 10000;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 480rem;
+    max-height: 80vh !important;
+    overflow-y: auto;
+    border-radius: 8rem;
+    background-color: rgba(22, 28, 38, 0.98);
+    border-width: 2rem;
+    border-style: solid;
+    border-color: rgba(255, 184, 58, 0.88);
+    padding: 14rem 16rem;
+    display: flex;
+    flex-direction: column;
+    color: #ffffff;
+    box-shadow: 0 12rem 36rem rgba(0, 0, 0, 0.7);
+}
+
+.modalHeader {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 6rem;
+}
+
+.modalWarnBadge {
+    padding: 2rem 7rem;
+    border-radius: 4rem;
+    background-color: rgba(235, 146, 22, 0.32);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 202, 82, 0.9);
+    color: #ffe699;
+    font-size: 10rem;
+    font-weight: 700;
+    margin-right: 8rem;
+    white-space: nowrap;
+}
+
+.modalTitle {
+    font-size: 14rem;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.modalSubtitle {
+    font-size: 11rem;
+    color: rgba(212, 224, 240, 0.9);
+    margin-bottom: 10rem;
+}
+
+.modalStatsRow {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-bottom: 8rem;
+}
+
+.modalStatPill {
+    padding: 3rem 8rem;
+    margin-right: 6rem;
+    margin-bottom: 4rem;
+    border-radius: 4rem;
+    background-color: rgba(38, 48, 64, 0.92);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.18);
+    font-size: 11rem;
+    font-weight: 700;
+    color: #ffd875;
+    white-space: nowrap;
+}
+
+.modalListBox {
+    max-height: 170rem;
+    min-height: 36rem;
+    flex-shrink: 1;
+    overflow-y: auto;
+    padding: 6rem 8rem;
+    margin-bottom: 12rem;
+    border-radius: 5rem;
+    background-color: rgba(12, 16, 24, 0.88);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.14);
+    display: flex;
+    flex-direction: column;
+}
+
+.modalListItem {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4rem 4rem;
+    border-bottom-width: 1rem;
+    border-bottom-style: solid;
+    border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+
+.modalItemName {
+    font-size: 11rem;
+    font-weight: 600;
+    color: #f0f6ff;
+    margin-right: 8rem;
+}
+
+.modalItemKind {
+    padding: 1rem 6rem;
+    border-radius: 3rem;
+    background-color: rgba(224, 62, 92, 0.28);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 128, 152, 0.78);
+    color: #ffc2ce;
+    font-size: 10rem;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.modalActions {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: flex-end;
+    padding-top: 8rem;
+    margin-top: 4rem;
+}
+
+.modalActions > * {
+    margin: 0 0 4rem 4rem;
+}
+
+.modalCancelBtn,
+.modalExcludeBtn,
+.modalDangerBtn {
+    min-height: 30rem;
+    max-width: 100%;
+    padding: 4rem 12rem;
+    white-space: normal;
+}
+
+.modalCancelBtn {
+    border-radius: 4rem;
+    background-color: rgba(44, 52, 66, 0.95);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #ffffff;
+    font-size: 11rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.modalExcludeBtn {
+    margin-right: 8rem;
+    border-radius: 4rem;
+    background-color: rgba(24, 118, 186, 0.92);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(132, 214, 255, 0.88);
+    color: #ffffff;
+    font-size: 11rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.modalExcludeBtn:hover {
+    background-color: rgba(34, 144, 224, 0.98);
+    border-color: rgba(186, 232, 255, 1);
+}
+
+.modalDangerBtn {
+    border-radius: 4rem;
+    background-color: rgba(214, 42, 34, 0.96);
+    background-image: linear-gradient(180deg, rgba(242, 74, 60, 0.98), rgba(182, 28, 22, 0.98));
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 172, 160, 0.92);
+    color: #ffffff;
+    font-size: 11rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.modalMoreRow {
+    padding: 5rem 4rem 2rem 4rem;
+    font-size: 10rem;
+    font-weight: 600;
+    color: rgba(196, 214, 240, 0.84);
+    text-align: center;
+}
+
+.infoHintBanner {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 4rem 8rem;
+    margin-bottom: 5rem;
+    border-radius: 4rem;
+    background-color: rgba(34, 134, 198, 0.2);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(102, 206, 255, 0.56);
+    color: #dff4ff;
+    font-size: 10rem;
+    font-weight: 600;
+}
+
+.undoBadge {
+    position: absolute;
+    top: -3rem;
+    right: -3rem;
+    min-width: 14rem;
+    height: 13rem;
+    padding: 0 3rem;
+    border-radius: 6rem;
+    background-color: rgba(34, 146, 224, 0.96);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(194, 234, 255, 0.92);
+    color: #ffffff;
+    font-size: 9rem;
+    font-weight: 700;
+    line-height: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.undoActiveBadge {
+    position: absolute;
+    top: -3rem;
+    right: -3rem;
+    min-width: 16rem;
+    height: 13rem;
+    padding: 0 3rem;
+    border-radius: 6rem;
+    background-color: rgba(24, 178, 132, 0.96);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(196, 255, 232, 0.95);
+    color: #ffffff;
+    font-size: 9rem;
+    font-weight: 700;
+    line-height: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.undoBtn {
+    height: 28rem;
+    margin-left: 5rem;
+    padding: 0 9rem;
+    border-radius: 4rem;
+    background-color: rgba(24, 92, 148, 0.9);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(112, 206, 255, 0.72);
+    color: #eaf7ff;
+    font-size: 11rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.undoBtn:hover {
+    background-color: rgba(34, 122, 194, 0.98);
+    border-color: rgba(168, 228, 255, 0.95);
+}
+
+.undoQuickRow {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    margin-top: 4rem;
+}
+
+.undoQuickBtn {
+    height: 22rem;
+    padding: 0 9rem;
+    border-radius: 4rem;
+    background-color: rgba(24, 92, 148, 0.88);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(112, 206, 255, 0.68);
+    color: #eaf7ff;
+    font-size: 10rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.undoQuickBtn:hover {
+    background-color: rgba(34, 122, 194, 0.96);
+    border-color: rgba(168, 228, 255, 0.95);
+}
+
+.undoBtnDisabled {
+    height: 28rem;
+    margin-left: 5rem;
+    padding: 0 9rem;
+    border-radius: 4rem;
+    background-color: rgba(45, 52, 64, 0.75);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.18);
+    color: rgba(180, 195, 210, 0.55);
+    font-size: 11rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: not-allowed;
+    white-space: nowrap;
+}
+
+.undoQuickBtnDisabled {
+    height: 22rem;
+    padding: 0 9rem;
+    border-radius: 4rem;
+    background-color: rgba(45, 52, 64, 0.75);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.18);
+    color: rgba(180, 195, 210, 0.55);
+    font-size: 10rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: not-allowed;
+    white-space: nowrap;
+}
+
+.undoProgressBox {
+    display: flex;
+    flex-direction: column;
+    padding: 5rem 8rem;
+    margin-bottom: 5rem;
+    border-radius: 4rem;
+    background-color: rgba(18, 66, 108, 0.56);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(94, 198, 255, 0.66);
+}
+
+.undoProgressTop {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4rem;
+}
+
+.undoProgressLabel {
+    font-size: 10rem;
+    font-weight: 700;
+    color: #dff4ff;
+    white-space: nowrap;
+}
+
+.undoProgressActions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    margin-left: 8rem;
+}
+
+.undoPauseBtn {
+    height: 20rem;
+    padding: 0 8rem;
+    border-radius: 3rem;
+    background-color: rgba(168, 114, 24, 0.9);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 206, 110, 0.85);
+    color: #ffffff;
+    font-size: 10rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.undoPauseBtn:hover {
+    background-color: rgba(196, 136, 32, 0.98);
+    border-color: rgba(255, 226, 154, 1);
+}
+
+.undoStopBtn {
+    height: 20rem;
+    padding: 0 8rem;
+    margin-left: 4rem;
+    border-radius: 3rem;
+    background-color: rgba(154, 64, 58, 0.9);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(242, 168, 160, 0.82);
+    color: #ffffff;
+    font-size: 10rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.undoStopBtn:hover {
+    background-color: rgba(186, 76, 68, 0.98);
+    border-color: rgba(255, 204, 198, 1);
+}
+
+.undoProgressTrack {
+    width: 100%;
+    height: 5rem;
+    border-radius: 3rem;
+    background-color: rgba(10, 20, 34, 0.78);
+    overflow: hidden;
+}
+
+.undoProgressFill {
+    height: 100%;
+    border-radius: 3rem;
+    background-color: #3cc8ff;
+    background-image: linear-gradient(90deg, #2ca4f5, #4ce8c8);
+}
+
+.undoPausedBox {
+    display: flex;
+    flex-direction: column;
+    padding: 5rem 8rem;
+    margin-bottom: 5rem;
+    border-radius: 4rem;
+    background-color: rgba(146, 98, 20, 0.34);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 198, 86, 0.76);
+    color: #fff2cf;
+    font-size: 10rem;
+    font-weight: 600;
+}
+
+.undoPausedBottom {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4rem;
+}
+
+.undoPausedRemaining {
+    font-size: 10rem;
+    font-weight: 700;
+    color: #ffe29a;
+    min-width: 0;
+    flex: 1;
+}
+
+.undoPausedActions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    margin-left: 8rem;
+}
+
+.undoResumeBtn {
+    height: 20rem;
+    padding: 0 9rem;
+    border-radius: 3rem;
+    background-color: rgba(24, 118, 186, 0.92);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(132, 214, 255, 0.88);
+    color: #ffffff;
+    font-size: 10rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.undoResumeBtn:hover {
+    background-color: rgba(34, 144, 224, 0.98);
+    border-color: rgba(186, 232, 255, 1);
+}
+
+.undoNoticeRow {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.undoNoticeTextBlock {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.undoNoticeText {
+    flex: 1;
+}
+
+.undoNoticeSub {
+    margin-top: 2rem;
+    font-size: 9rem;
+    font-weight: 600;
+    color: rgba(224, 242, 255, 0.88);
+}
+
+.undoSkippedNote {
+    margin-top: 2rem;
+    font-size: 9rem;
+    font-weight: 600;
+    color: #ffe29a;
+}
+
+.undoScopeNote {
+    margin-top: 2rem;
+    margin-bottom: 4rem;
+    font-size: 9rem;
+    font-weight: 500;
+    color: rgba(206, 224, 244, 0.78);
+}
+
+.undoScopeConsumedHint {
+    padding: 2rem 10rem 4rem 10rem;
+    font-size: 9rem;
+    font-weight: 500;
+    color: rgba(206, 224, 244, 0.78);
+}
+
+.undoDismissBtn {
+    height: 18rem;
+    padding: 0 7rem;
+    margin-left: 8rem;
+    border-radius: 3rem;
+    background-color: rgba(34, 42, 54, 0.9);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.28);
+    color: rgba(236, 242, 250, 0.96);
+    font-size: 9rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.undoDismissBtn:hover {
+    background-color: rgba(56, 68, 84, 0.98);
+    border-color: rgba(255, 255, 255, 0.48);
+    color: #ffffff;
+}
+
+.colorDockedCard {
+    position: fixed;
+    right: 18rem;
+    top: 72rem;
+    width: 420rem;
+    box-sizing: border-box;
+    max-width: calc(100vw - 36rem);
+    max-height: calc(100vh - 84rem);
+    padding: 12rem;
+    border-radius: 7rem;
+    background-color: rgba(15, 20, 29, 0.94);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(145, 210, 255, 0.42);
+    color: rgba(242, 246, 252, 0.96);
+    font-size: 11rem;
+    display: flex;
+    flex-direction: column;
+    pointer-events: auto;
+    z-index: 950;
+    box-shadow: 0 10rem 28rem rgba(0, 0, 0, 0.52);
+}
+
+.colorHeader {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding-bottom: 8rem;
+    border-bottom: 1rem solid rgba(255, 255, 255, 0.12);
+    cursor: grab;
+    flex-shrink: 0;
+}
+
+.colorHeaderDragging {
+    cursor: grabbing;
+}
+
+.colorHeaderText {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.colorTitle {
+    font-size: 14rem;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.colorSubtitle {
+    margin-top: 2rem;
+    font-size: 10rem;
+    color: rgba(196, 216, 238, 0.86);
+}
+
+.colorCloseIconBtn {
+    width: 22rem;
+    height: 22rem;
+    margin-left: 8rem;
+    border-radius: 4rem;
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(235, 242, 250, 0.9);
+    font-size: 15rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.colorCloseIconBtn:hover {
+    background-color: rgba(255, 92, 92, 0.35);
+    color: #ffffff;
+}
+
+.colorScrollBody {
+    margin-top: 8rem;
+    margin-bottom: 8rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: 615rem;
+    padding-right: 4rem;
+}
+
+.colorSection {
+    margin-bottom: 10rem;
+    padding: 8rem;
+    border-radius: 5rem;
+    background-color: rgba(24, 32, 46, 0.78);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+}
+
+.colorSectionTitle {
+    font-size: 11rem;
+    font-weight: 700;
+    color: rgba(182, 224, 255, 0.96);
+    margin-bottom: 6rem;
+}
+
+.colorPresetGrid {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
+.colorPresetBtn {
+    width: 48.5%;
+    margin-right: 1.5%;
+    margin-bottom: 5rem;
+    padding: 6rem 8rem;
+    border-radius: 4rem;
+    background-color: rgba(34, 45, 62, 0.88);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.14);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    cursor: pointer;
+}
+
+.colorPresetBtn:hover {
+    background-color: rgba(48, 66, 92, 0.96);
+    border-color: rgba(145, 210, 255, 0.65);
+}
+
+.colorPresetDots {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-right: 6rem;
+    flex-shrink: 0;
+}
+
+.colorPresetDot {
+    width: 8rem;
+    height: 8rem;
+    border-radius: 4rem;
+    margin-right: 2rem;
+    border: 1rem solid rgba(0, 0, 0, 0.45);
+}
+
+.colorPresetName {
+    font-size: 10rem;
+    font-weight: 600;
+    color: rgba(240, 246, 252, 0.95);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.colorGroupsContainer {
+    display: flex;
+    flex-direction: column;
+}
+
+.colorGroupBlock {
+    margin-bottom: 6rem;
+}
+
+.colorGroupLabel {
+    font-size: 9.5rem;
+    font-weight: 600;
+    color: rgba(186, 202, 222, 0.85);
+    margin-bottom: 3rem;
+}
+
+.colorChipsWrap {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
+.colorItemChip {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 3rem 7rem;
+    margin-right: 4rem;
+    margin-bottom: 4rem;
+    border-radius: 4rem;
+    background-color: rgba(16, 22, 32, 0.86);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.14);
+    cursor: pointer;
+}
+
+.colorItemChip:hover {
+    border-color: rgba(162, 220, 255, 0.65);
+    background-color: rgba(34, 48, 68, 0.92);
+}
+
+.colorItemChipSelected {
+    border-color: rgba(112, 208, 255, 0.98);
+    background-color: rgba(30, 68, 102, 0.94);
+}
+
+.colorItemSwatch {
+    width: 11rem;
+    height: 11rem;
+    border-radius: 3rem;
+    margin-right: 5rem;
+    border: 1rem solid rgba(255, 255, 255, 0.38);
+    flex-shrink: 0;
+}
+
+.colorItemName {
+    font-size: 10rem;
+    font-weight: 600;
+    color: rgba(236, 243, 252, 0.95);
+    white-space: nowrap;
+}
+
+.colorEditorBox {
+    margin-top: 6rem;
+    padding: 8rem;
+    border-radius: 5rem;
+    background-color: rgba(13, 18, 26, 0.9);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(145, 210, 255, 0.25);
+    display: flex;
+    flex-direction: column;
+}
+
+.colorEditorHeader {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6rem;
+}
+
+.colorEditorIdentity {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.colorEditorPreviewSwatch {
+    width: 18rem;
+    height: 18rem;
+    border-radius: 4rem;
+    margin-right: 7rem;
+    border: 1rem solid rgba(255, 255, 255, 0.55);
+}
+
+.colorEditorItemName {
+    font-size: 11.5rem;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.colorEditorHexCode {
+    font-size: 11rem;
+    font-weight: 700;
+    color: rgba(178, 224, 255, 0.96);
+    padding: 2rem 6rem;
+    border-radius: 3rem;
+    background-color: rgba(30, 44, 62, 0.9);
+}
+
+.colorSubHeading {
+    font-size: 9.5rem;
+    font-weight: 600;
+    color: rgba(192, 208, 228, 0.86);
+    margin-top: 4rem;
+    margin-bottom: 4rem;
+}
+
+.colorSwatchesGrid {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-bottom: 4rem;
+}
+
+.colorQuickSwatch {
+    width: 18rem;
+    height: 18rem;
+    border-radius: 3rem;
+    margin-right: 4rem;
+    margin-bottom: 4rem;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.3);
+    cursor: pointer;
+}
+
+.colorQuickSwatch:hover {
+    border-color: #ffffff;
+    transform: scale(1.08);
+}
+
+.colorQuickSwatchActive {
+    border-width: 2rem;
+    border-color: #ffffff;
+    box-shadow: 0 0 0 1rem rgba(18, 24, 34, 0.9);
+}
+
+.colorSliderRow {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 6rem;
+}
+
+.colorSliderMeta {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 3rem;
+}
+
+.colorSliderLabelGroup {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.colorSliderLabel {
+    font-size: 10rem;
+    font-weight: 600;
+    color: rgba(232, 240, 250, 0.94);
+}
+
+.colorZeroBadge {
+    margin-left: 6rem;
+    padding: 1rem 5rem;
+    border-radius: 3rem;
+    background-color: rgba(45, 74, 108, 0.72);
+    font-size: 8.5rem;
+    font-weight: 600;
+    color: rgba(190, 228, 255, 0.96);
+}
+
+.colorSliderValue {
+    font-size: 10rem;
+    font-weight: 700;
+    color: rgba(212, 236, 255, 0.98);
+}
+
+.colorSliderControlRow {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.colorStepBtn {
+    width: 18rem;
+    height: 16rem;
+    border-radius: 3rem;
+    background-color: rgba(34, 46, 62, 0.92);
+    border: 1rem solid rgba(255, 255, 255, 0.22);
+    color: rgba(235, 244, 252, 0.95);
+    font-size: 11rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.colorStepBtn:hover {
+    background-color: rgba(54, 74, 102, 0.98);
+    border-color: rgba(154, 214, 255, 0.8);
+}
+
+.colorSliderTrack {
+    position: relative;
+    flex: 1;
+    height: 12rem;
+    margin: 0 6rem;
+    border-radius: 6rem;
+    border: 1rem solid rgba(255, 255, 255, 0.28);
+    cursor: pointer;
+}
+
+.colorSliderFill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    border-radius: 5rem;
+    background-color: rgba(255, 255, 255, 0.14);
+    pointer-events: none;
+}
+
+.colorSliderThumb {
+    position: absolute;
+    top: -2rem;
+    width: 10rem;
+    height: 14rem;
+    margin-left: -5rem;
+    border-radius: 3rem;
+    border: 1.5rem solid rgba(10, 14, 22, 0.9);
+    box-shadow: 0 0 3rem rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+}
+
+.colorFooter {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    padding-top: 8rem;
+    border-top: 1rem solid rgba(255, 255, 255, 0.12);
+    flex-shrink: 0;
+}
+
+.colorFooterHint {
+    font-size: 9.5rem;
+    color: rgba(182, 200, 222, 0.78);
+}
+
+.colorFooterActions {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.colorCloseBtn {
+    height: 24rem;
+    padding: 0 12rem;
+    margin-left: 6rem;
+    border-radius: 4rem;
+    background-color: rgba(30, 108, 174, 0.94);
+    border: 1rem solid rgba(132, 210, 255, 0.88);
+    color: #ffffff;
+    font-size: 10.5rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.colorCloseBtn:hover {
+    background-color: rgba(44, 134, 210, 0.98);
+    border-color: #ffffff;
+}
+
+.modeSwitcherGroup {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    max-width: 100%;
+    background-color: rgba(12, 20, 32, 0.72);
+    border: 1rem solid rgba(112, 162, 214, 0.34);
+    border-radius: 5rem;
+    padding: 2rem;
+}
+
+.modeSwitcherBtn {
+    min-height: 24rem;
+    padding: 2rem 8rem;
+    border-radius: 3.5rem;
+    border: 1rem solid transparent;
+    background-color: transparent;
+    color: rgba(205, 222, 240, 0.84);
+    font-size: 10.5rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.modeSwitcherBtn:hover {
+    color: #ffffff;
+    background-color: rgba(48, 84, 124, 0.45);
+}
+
+.modeSwitcherBtnActive {
+    background-color: rgba(34, 118, 192, 0.92);
+    border-color: rgba(140, 216, 255, 0.9);
+    color: #ffffff;
+    font-weight: 700;
+}
+
+.modeSwitcherBtnActive:hover {
+    background-color: rgba(44, 134, 214, 0.98);
+    border-color: #ffffff;
+}
+
+.polygonDraftRow {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4rem 7rem;
+    margin-bottom: 5rem;
+    border-radius: 4rem;
+    background-color: rgba(20, 44, 70, 0.72);
+    border: 1rem solid rgba(102, 184, 248, 0.42);
+}
+
+.polygonDraftLeft {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.polygonVertexPill {
+    font-size: 10rem;
+    font-weight: 700;
+    color: #d6eeff;
+    background-color: rgba(24, 78, 128, 0.85);
+    border: 1rem solid rgba(118, 200, 255, 0.55);
+    border-radius: 3rem;
+    padding: 1.5rem 6rem;
+    margin-right: 6rem;
+}
+
+.polygonVertexPillCap {
+    color: #fff3e6;
+    background-color: rgba(188, 72, 24, 0.92);
+    border-color: rgba(255, 166, 98, 0.9);
+}
+
+.polygonSnapBanner {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 4.5rem 8rem;
+    margin-bottom: 5rem;
+    border-radius: 4rem;
+    background-color: rgba(16, 96, 86, 0.86);
+    border: 1rem solid rgba(82, 242, 204, 0.9);
+    color: #dffff6;
+    font-size: 10.5rem;
+    font-weight: 700;
+}
+
+.vertexCapBanner {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 5rem 8rem;
+    margin-bottom: 5rem;
+    border-radius: 4rem;
+    background-color: rgba(176, 52, 20, 0.9);
+    border: 1.5rem solid rgba(255, 146, 84, 0.95);
+    color: #fff2eb;
+    font-size: 10.5rem;
+    font-weight: 700;
+}
+
+.shapeInvalidBanner {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 5rem 8rem;
+    margin-bottom: 5rem;
+    border-radius: 4rem;
+    background-color: rgba(146, 84, 18, 0.88);
+    border: 1rem solid rgba(255, 190, 92, 0.85);
+    color: #fff3da;
+    font-size: 10.5rem;
+    font-weight: 600;
+}
+
+.freehandDrawBar {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4.5rem 8rem;
+    margin-bottom: 5rem;
+    border-radius: 4rem;
+    background-color: rgba(22, 68, 108, 0.82);
+    border: 1rem solid rgba(112, 206, 255, 0.72);
+}
+
+.freehandBadge {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    color: #e2f5ff;
+    font-size: 10.5rem;
+    font-weight: 700;
+}
+
+.freehandDot {
+    width: 7rem;
+    height: 7rem;
+    border-radius: 50%;
+    background-color: #5ee6ff;
+    margin-right: 6rem;
+}
+
+.presetBar {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.presetBtn {
+    padding: 3rem 7rem;
+    margin-right: 4rem;
+    margin-bottom: 3rem;
+    border-radius: 4rem;
+    font-size: 10.5rem;
+    font-weight: 600;
+    color: rgba(235, 244, 255, 0.9);
+    background-color: rgba(24, 34, 48, 0.8);
+    border: 1rem solid rgba(150, 180, 220, 0.35);
+
+    &:hover {
+        background-color: rgba(44, 68, 98, 0.9);
+        border-color: rgba(150, 204, 255, 0.72);
+    }
+}
+
+.presetBtnActive {
+    color: #e6f7ff;
+    background-color: rgba(26, 98, 152, 0.92);
+    border: 1rem solid rgba(114, 210, 255, 0.95);
+}
+
+.presetBtnEmpty {
+    opacity: 0.45;
+}
+
+.customSlotGroup {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-right: 6rem;
+    margin-bottom: 3rem;
+
+    .presetBtn {
+        margin-right: 2rem;
+        margin-bottom: 0;
+    }
+}
+
+.customSlotActionBtn,
+.customSlotClearBtn {
+    padding: 3rem 5rem;
+    margin-right: 2rem;
+    border-radius: 4rem;
+    font-size: 10.5rem;
+    font-weight: 700;
+    color: #d8ecff;
+    background-color: rgba(28, 48, 72, 0.85);
+    border: 1rem solid rgba(130, 175, 220, 0.4);
+
+    &:hover {
+        background-color: rgba(48, 86, 128, 0.95);
+    }
+}
+
+.customSlotClearBtn {
+    color: #ffd8d8;
+    border-color: rgba(240, 120, 120, 0.45);
+
+    &:hover {
+        background-color: rgba(152, 42, 42, 0.88);
+    }
+}
+
+.netSubToggleBtn {
+    padding: 4rem 7rem;
+    margin-left: 4rem;
+    border-radius: 4rem;
+    font-size: 10.5rem;
+    font-weight: 600;
+    color: #d8ecff;
+    background-color: rgba(24, 38, 56, 0.85);
+    border: 1rem solid rgba(130, 176, 224, 0.42);
+
+    &:hover {
+        background-color: rgba(42, 68, 102, 0.92);
+    }
+}
+
+.netSubToggleFiltered {
+    border-color: rgba(255, 194, 96, 0.85);
+    color: #fff2d6;
+}
+
+.netSubPanel {
+    display: flex;
+    flex-direction: column;
+    padding: 6rem 8rem;
+    margin-top: 4rem;
+    margin-bottom: 4rem;
+    border-radius: 4rem;
+    background-color: rgba(14, 22, 34, 0.82);
+    border: 1rem solid rgba(110, 162, 214, 0.35);
+}
+
+.netSubRow {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.netSubDimmed {
+    opacity: 0.55;
+}
+
+.netSubChip {
+    padding: 3rem 8rem;
+    margin-right: 5rem;
+    margin-bottom: 3rem;
+    border-radius: 4rem;
+    font-size: 10.5rem;
+    font-weight: 600;
+    color: rgba(226, 238, 252, 0.82);
+    background-color: rgba(26, 36, 50, 0.85);
+    border: 1rem solid rgba(130, 165, 200, 0.35);
+
+    &:hover {
+        background-color: rgba(44, 66, 94, 0.92);
+    }
+}
+
+.netSubChipActive {
+    color: #e6fbff;
+    background-color: rgba(22, 102, 134, 0.92);
+    border-color: rgba(96, 224, 255, 0.9);
+}
+
+.netSubMasterOffHint {
+    margin-top: 3rem;
+    font-size: 10rem;
+    color: #ffdfa8;
+}
+
+.pickSimilarBtn,
+.pickSimilarBtnArmed {
+    display: flex;
+    align-items: center;
+    height: 28rem;
+    padding: 0 9rem;
+    white-space: nowrap;
+    border-radius: 4rem;
+    font-size: 11.5rem;
+    font-weight: 700;
+    color: #dff4ff;
+    background-color: rgba(24, 68, 108, 0.9);
+    border: 1rem solid rgba(108, 198, 255, 0.65);
+
+    &:hover {
+        background-color: rgba(34, 92, 146, 0.95);
+    }
+}
+
+.pickSimilarBtnArmed {
+    color: #ffffff;
+    background-color: rgba(18, 128, 138, 0.95);
+    border-color: rgba(112, 248, 255, 0.98);
+}
+
+.pickSimilarBtnDisabled {
+    opacity: 0.45;
+}
+
+.pickSimilarBanner {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 5rem 8rem;
+    margin-bottom: 5rem;
+    border-radius: 4rem;
+    background-color: rgba(16, 88, 102, 0.9);
+    border: 1rem solid rgba(98, 240, 255, 0.9);
+    color: #e6fdff;
+    font-size: 10.5rem;
+    font-weight: 700;
+}
+
+.navTabRow {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    padding: 3rem;
+    margin: 4rem 12rem 5rem;
+    min-height: 30rem;
+    background-color: rgba(16, 24, 38, 0.7);
+    border-radius: 6rem;
+}
+
+.navTabBtn {
+    flex: 1 1 0;
+    min-width: 0;
+    margin: 0 2rem;
+    padding: 3rem 4rem;
+    border-radius: 4rem;
+    font-size: 11rem;
+    font-weight: 700;
+    color: rgba(200, 218, 240, 0.85);
+    background-color: rgba(26, 38, 56, 0.75);
+    border: 1rem solid rgba(80, 115, 155, 0.4);
+    cursor: pointer;
+    pointer-events: auto;
+    white-space: normal;
+    text-align: center;
+
+    &:hover {
+        background-color: rgba(38, 56, 82, 0.9);
+        color: #ffffff;
+    }
+}
+
+.navTabBtnActive {
+    color: #ffffff;
+    background-color: rgba(30, 96, 158, 0.9);
+    border-color: rgba(100, 190, 255, 0.85);
+}
+
+.impactReportCard {
+    margin-top: 6rem;
+    padding: 8rem 10rem;
+    border-radius: 6rem;
+    background-color: rgba(18, 26, 40, 0.95);
+    border: 1rem solid rgba(90, 140, 190, 0.55);
+}
+
+.impactReportHeader {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6rem;
+    font-size: 11.5rem;
+    font-weight: 700;
+    color: #a8dfff;
+}
+
+.impactReportList {
+    display: flex;
+    flex-direction: column;
+    gap: 3rem;
+    max-height: 140rem;
+    overflow-y: auto;
+}
+
+.impactReportItem {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3rem 6rem;
+    border-radius: 3rem;
+    background-color: rgba(28, 40, 60, 0.75);
+    font-size: 10.5rem;
+    color: #e2eeff;
+}
+
+.impactReportItemCount {
+    font-weight: 700;
+    color: #ffd866;
+    margin-left: 8rem;
+}
+
+.topToolbarRow {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 100%;
+}
+
+.modeInfoToggleBtn {
+    height: 24rem;
+    margin-left: 5rem;
+    padding: 0 8rem;
+    border-radius: 4rem;
+    font-size: 10.5rem;
+    color: rgba(180, 210, 240, 0.9);
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1rem solid rgba(255, 255, 255, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.modeInfoToggleBtn:hover {
+    background-color: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+.modeInfoToggleBtnActive {
+    background-color: rgba(30, 96, 158, 0.7);
+    border-color: rgba(100, 190, 255, 0.85);
+    color: #ffffff;
+}
+
+.modeInfoPanel {
+    display: flex;
+    flex-direction: column;
+    padding: 8rem 12rem;
+    margin: 4rem 12rem 6rem;
+    border-radius: 6rem;
+    background-color: rgba(14, 20, 30, 0.92);
+    border: 1rem solid rgba(255, 255, 255, 0.16);
+    font-size: 11rem;
+    color: rgba(220, 232, 246, 0.9);
+    gap: 6rem;
+}
+
+.modeInfoDesc {
+    color: #ffffff;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.modeInfoHotkeys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6rem;
+    color: rgba(180, 205, 230, 0.9);
+    font-size: 10.5rem;
+}
+
+.modeInfoHotkeyTag {
+    background-color: rgba(255, 255, 255, 0.08);
+    padding: 2rem 6rem;
+    border-radius: 3rem;
+    border: 1rem solid rgba(255, 255, 255, 0.14);
+    font-family: monospace;
+}
+
+.modeInfoOptionRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 5rem;
+    border-top: 1rem solid rgba(255, 255, 255, 0.1);
+}
+
+.confirmBtnPreviewOnly {
+    background-color: rgba(55, 60, 70, 0.9);
+    background-image: none;
+    border: 1rem solid rgba(255, 184, 58, 0.6);
+    color: #ffda88;
+    cursor: not-allowed;
+}
+
+.statusAmberBadge {
+    background-color: rgba(245, 158, 11, 0.25);
+    border: 1rem solid rgba(245, 158, 11, 0.85);
+    color: #fcd34d;
+    padding: 2rem 6rem;
+    border-radius: 4rem;
+    font-size: 10.5rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 4rem;
+}
+
+.calculatingBadge {
+    background-color: rgba(59, 130, 246, 0.25);
+    border: 1rem solid rgba(96, 165, 250, 0.7);
+    color: #93c5fd;
+    padding: 2rem 6rem;
+    border-radius: 4rem;
+    font-size: 10.5rem;
+    font-weight: 600;
+}
+

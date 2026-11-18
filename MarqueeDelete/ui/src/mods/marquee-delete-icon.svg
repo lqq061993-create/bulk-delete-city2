@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Corner L-brackets (dashed marquee frame) -->
+  <path d="M4,4 H10 V6.5 H6.5 V10 H4 Z" fill="#ffffff"/>
+  <path d="M22,4 H28 V10 H25.5 V6.5 H22 Z" fill="#ffffff"/>
+  <path d="M4,22 H6.5 V25.5 H10 V28 H4 Z" fill="#ffffff"/>
+  <path d="M25.5,22 H28 V28 H22 V25.5 H25.5 Z" fill="#ffffff"/>
+  <!-- Mid-edge dashes -->
+  <rect x="13" y="4" width="6" height="2.5" rx="0.8" fill="#ffffff"/>
+  <rect x="13" y="25.5" width="6" height="2.5" rx="0.8" fill="#ffffff"/>
+  <rect x="4" y="13" width="2.5" height="6" rx="0.8" fill="#ffffff"/>
+  <rect x="25.5" y="13" width="2.5" height="6" rx="0.8" fill="#ffffff"/>
+  <!-- Inner crisp delete X mark -->
+  <path d="M12.2,10.4 L16,14.2 L19.8,10.4 L21.6,12.2 L17.8,16 L21.6,19.8 L19.8,21.6 L16,17.8 L12.2,21.6 L10.4,19.8 L14.2,16 L10.4,12.2 Z" fill="#ffffff"/>
+</svg>

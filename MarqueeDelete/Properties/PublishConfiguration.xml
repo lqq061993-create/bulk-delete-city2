@@ -1,0 +1,123 @@
+<Publish>
+	<ModId Value="167502" />
+	<DisplayName Value="Bulk Delete · 批量删除" />
+	<ShortDescription Value="Bulk Delete: box, polygon or freehand select, 18 colors, selective undo. AI-assisted mod, human-reviewed. | Bulk Delete · 批量删除：矩形/多边形/笔画三种选区、18 项配色、可选撤回。AI 辅助开发，人工把关。" />
+	<LongDescription>**Bulk Delete · 批量删除**
+
+> ### ⚠️ Please read before subscribing
+>
+> **This is an AI-made mod.** The code, the cover art and this description were all produced with AI. The author is **not a programmer** and **cannot write code**. Everything here was built by directing AI models and testing the results in game.
+>
+> **It has caused performance problems before.** Local testing has shown the game becoming stuttery, buildings being constructed more slowly, and vehicles stopping in place. **The current version shows none of these in testing, but there is no guarantee they will not come back.**
+>
+> **Save your game before installing.** Or better: try it on a new save first.
+>
+> **This is a mod the author made for their own use**, to solve one problem — there was no way to delete or undo large areas. The code has been reviewed and optimised repeatedly by several different models, but **it can still freeze or crash the game. Please use it with care.**
+>
+> If that is not acceptable to you, please do not subscribe.
+
+### English
+
+Bulk Delete replaces slow, single-click bulldozing with fast, precise area clearing. Choose from three selection modes, review exactly what will be affected, fine-tune the selection object by object, and delete it all in one pass.
+
+### Three ways to select
+
+- **Drag a box** — Pull a rectangle from corner to corner, either following your camera angle or locked to world North-South.
+- **Click a polygon** — Drop vertices one at a time and the edges connect themselves. Click the first point or press Enter to close the shape, or right-click / Backspace to back out the last vertex. Up to 64 vertices.
+- **Draw a stroke** — Hold the left mouse button and trace the outline you want, then release and it closes into a shape. Every shape must pass validation before it can be used for selection.
+- **Live readouts in every mode** — Area, perimeter, and vertex count update as you work (a box also shows cells and meters), over colour-coded building zone outlines.
+- **Single-click fine-tuning** — Left-click to add a missed object, or right-click a single item to remove it without clearing the rest of your selection.
+
+### Selective, pauseable undo
+
+- **Pick from six asset types** — Choose any mix of buildings (upgrades, attached lots, and internal links always restore together), roads and networks, surfaces, trees, props, and decals. Each toggle shows how many records are stored in the snapshot.
+- **Frame-paced, pauseable, and stoppable** — Rebuild requests submit smoothly across frames to avoid freezes, with parent lookups cached. Pause, resume, or stop an undo anytime. Keeps up to 5 steps, 8,000 records per step.
+- **Know the limits** — Undo submits rebuild requests for geometry and basic properties only. Households, jobs, economy, and wider simulation state are not restored, and vehicles or citizens cannot be undone. Items skipped or failed to capture are reported clearly rather than silently dropped. If you need a guaranteed rollback, load an earlier save.
+
+### Customize every highlight colour
+
+- **18 colours and 3 opacity sliders** — Restyle ground and underground selection borders and fills, all 5 building zone colours, threshold warning pulses, network, tree, prop and decal overlays, and dark outlines, with live ground preview.
+- **4 built-in presets** — Switch in one click between Classic, High-Contrast Neon, Colorblind Safe, and Soft Translucent.
+
+### Clean filtering and built-in safety
+
+- **Asset and zone filters** — Target residential, commercial, industrial, office and service buildings, plus roads and networks, painted surfaces, trees, props, decals, and vehicles or citizens, with one-click select all, clear all, or reset.
+- **Ground and underground separation** — Follows the vanilla underground toggle so clearing surface streets never touches buried tunnels or pipes.
+- **Safety protections** — Delete confirmation (on by default), a second confirmation listing service, unique and signature buildings before demolition (up to 10 named plus a total count, with a one-click exclude option), and automatic protection for map-edge outside connections, districts and map tiles.
+
+### Notes
+
+- Built and tested against Cities: Skylines II 1.6.4f1. It also loads on other 1.6.x builds, but those are NOT tested — the game will keep working and the mod will load in compatibility mode.
+- Very large selections on heavily modded cities can still spike a single frame; working in smaller chunks stays smoother.
+- Freehand outlines are automatically simplified. The panel flags strokes whose original point count exceeds the vertex limit.
+- When reporting a bug, please attach MarqueeDelete.status.log, Player.log, your game version, and your mod list.
+
+---
+
+### 中文
+
+> ### ⚠️ 订阅前请先看这一段
+>
+> **这是一个 AI 制作的模组。** 代码、封面图和这份简介全部由 AI 生成。作者**不是程序员，也不会写代码**，所有内容都是在指挥 AI 模型生成后，再进游戏反复测试得到的。
+>
+> **它曾经造成过性能问题。** 本地安装测试表明，它可能导致游戏变得卡顿、建筑建造速度变慢、车辆停止移动等性能下降。**现版本测试没有发现这些问题，但不保证以后不会再次出现。**
+>
+> **安装之前请先保存存档。** 更稳妥的做法是开一个新档测试。
+>
+> **这是一个作者自用的模组**，只为解决一个问题——游戏里没法大面积删除和撤回。代码虽然经过多个模型反复验证与优化，但**仍然容易出现卡死、闪退。请谨慎使用。**
+>
+> 如果这些风险你不能接受，请不要订阅。
+
+**Bulk Delete · 批量删除** 告别繁琐的逐个点击拆除，让你快速、精准地清理成片区域：用三种方式勾勒范围、核对影响范围、逐个微调，然后一次清除。
+
+### 三种选区方式
+
+- **拖框选区**：按住左键从一角拖到对角，可跟随镜头角度，也可锁定正南正北方向。
+- **多边形点选**：左键逐点布点，点与点之间自动连成直线。点击起点或按 Enter 闭合，右键 / Backspace 撤销上一个顶点，最多 64 个顶点。
+- **自由笔画**：按住左键勾勒想要的轮廓，松开后自动闭合成形。图形需通过有效性检查才能用于选区。
+- **三种模式均实时显示尺寸**：面积、周长与顶点数随操作更新（矩形同时显示格数与米数），并叠加彩色建筑分区轮廓。
+- **点选增减微调**：锁定选区后，左键单击补选遗漏对象，右键单击单独剔除误选目标，无需整片重来。
+
+### 可选资产分步撤回
+
+- **六类资产自由勾选**：可单独开关建筑（扩建、附属院落与内部通道随主建筑一同恢复）、道路与管网、地表、树木、摆件与贴花，每个开关实时显示快照内的记录条数。
+- **按帧分步、可暂停可停止**：重建请求按每帧耗时预算分批提交（带父实体查询缓存），随时可暂停、继续或停止；最多保留 5 步快照，每步上限 8000 条记录。
+- **撤回边界说明**：撤回提交的是几何与部分属性的重建请求（尽力恢复，不等于读档），不还原住户、就业、经济与完整模拟状态，车辆与市民完全不支持撤回；未能捕获或被跳过的对象会明确提示，不会静默丢失。需要百分百精确回滚时，请直接读取早期存档。
+
+### 自定义高亮配色
+
+- **18 项颜色 + 3 项透明度**：可分别调节地上与地下选区边框和填充、五类建筑分区颜色、超阈值脉冲警告色、道路树木摆件贴花等高亮及深色描边，地面效果实时预览。
+- **4 套一键预设**：内置经典、高对比霓虹、色盲友好、柔和半透明四套方案，一键切换或恢复默认。
+
+### 分类筛选与安全保护
+
+- **资产与分区过滤**：独立开关住宅、商业、工业、办公、公共服务建筑，以及道路管网、树木、摆件、贴花、自定义地表与车辆市民，支持全选、全不选与重置安全默认。
+- **地上地下分层**：联动原版地下视图开关，地面拆除与地下管道隧道互不干扰。
+- **防误删多重保护**：默认开启删除前确认；选区包含市政服务、独特或重点建筑时弹出名录二次确认（前 10 个列出名称，支持一键排除重要建筑）；默认保护地图边缘外部连接、行政区与地图边界区块。
+
+### 制作方式
+
+- **AI 辅助开发，人工把关**：每项改动都由人定方案，经多个模型分头审查，构建与测试通过后才发布，每次发版都会重跑完整测试。
+- **这些测试不等于实机保证**：离线测试覆盖较广，但不能替代真实存档里的长期使用验证。
+
+### 其他说明
+
+- 针对 Cities: Skylines II 1.6.4f1 编译并测试。1.6 系列的其他版本也能加载，但**未经测试**——此时模组会以兼容模式运行。
+- 在多模组环境下一次性清空超大范围，单帧开销仍可能偏高，建议分片操作。
+- 自由笔画轮廓会自动简化；原始采样点数超过顶点上限时，面板会显示提示。
+- 反馈问题请附上 MarqueeDelete.status.log、Player.log、游戏版本与模组列表。</LongDescription>
+	<Thumbnail Value="Properties/Thumbnail.png" />
+	<Screenshot Value="Properties/Screenshots/01-coverage-overview.png" />
+	<Screenshot Value="Properties/Screenshots/concept_modes.png" />
+	<Screenshot Value="Properties/Screenshots/01-polygon-select.jpg" />
+	<Screenshot Value="Properties/Screenshots/02-freehand-stroke.jpg" />
+	<Screenshot Value="Properties/Screenshots/concept_colors.png" />
+	<Screenshot Value="Properties/Screenshots/03-selective-undo.jpg" />
+	<Tag Value="Code Mod" />
+	<ModVersion Value="2.7.7" />
+	<GameVersion Value="1.6*" />
+	<ChangeLog>- Extended game support: the mod now loads on the whole Cities: Skylines II 1.6 line instead of only 1.6.4f1.
+- Builds other than 1.6.4f1 load in compatibility mode — it is not tested on those builds, so please report anything that behaves oddly.
+- 扩展游戏版本支持：现在整个《城市：天际线 2》1.6 系列都能加载，不再只限 1.6.4f1。
+- 非 1.6.4f1 的版本以兼容模式运行——这些版本未经过测试，如果发现异常请反馈。</ChangeLog>
+</Publish>

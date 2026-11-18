@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems><UseAppHost>false</UseAppHost></PropertyGroup>
+  <ItemGroup><Compile Include="DeletionRegression.cs"/><Compile Include="../Cascade.cs" Link="Cascade.cs"/><Compile Include="../DeletionPolicies.cs" Link="DeletionPolicies.cs"/><Compile Include="../Compatibility.cs" Link="Compatibility.cs"/></ItemGroup>
+</Project>

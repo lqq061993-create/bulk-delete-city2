@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Curved undo arrow -->
+  <path d="M4.2,12.2 L12.2,5.2 V19.2 Z" fill="#ffffff"/>
+  <path d="M11.5,10.2 H18.5 C24.0,10.2 27.5,13.7 27.5,18.8 C27.5,23.9 24.0,27.0 18.5,27.0 H9.5 V23.4 H18.2 C21.6,23.4 23.8,21.5 23.8,18.8 C23.8,16.1 21.6,13.8 18.2,13.8 H11.5 Z" fill="#ffffff"/>
+</svg>

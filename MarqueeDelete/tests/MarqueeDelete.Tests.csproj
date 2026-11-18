@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <UseAppHost>false</UseAppHost>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="MarqueeDelete.Tests.cs" />
+    <Compile Include="..\AssetOverlayLogic.cs" Link="AssetOverlayLogic.cs" />
+    <Compile Include="..\ColorLibrary.cs" Link="ColorLibrary.cs" />
+    <Compile Include="..\SelectionLogic.cs" Link="SelectionLogic.cs" />
+    <Compile Include="..\SelectiveUndoLogic.cs" Link="SelectiveUndoLogic.cs" />
+    <Compile Include="..\UndoBatchPolicy.cs" Link="UndoBatchPolicy.cs" />
+  </ItemGroup>
+</Project>
