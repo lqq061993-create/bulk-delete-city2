@@ -98,11 +98,28 @@ if ($ver.GameMvid -ne $liveMvid) {
 # 证据里的 MVID 匹配本机，只说明「这份证据对应本机输入」，不说明这个构建是我们声称支持的那个。
 # 发布前还必须校验它等于 Compatibility.cs 里声明支持的目标 MVID，否则在一台装了别的游戏版本的
 # 机器上刷新证据，也能得到一份自洽、却在目标版本上从未验证过的证据。
+#
+# 声明本身缺失也算失败，不能只告警：没有声明就等于「没有目标可校验」，那道校验被悄悄跳过，
+# 而这正是它要防的情形。恰好一个有效的 32 位十六进制值才算声明成立。
 $declaredMvid = ''
+$declaredMvidValues = @()
 $compatPath = Join-Path $root 'Compatibility.cs'
-if (Test-Path -LiteralPath $compatPath) {
-    $declaredMvidMatch = [regex]::Match((Get-Content -LiteralPath $compatPath -Raw -Encoding UTF8), 'VerifiedGameMvid\s*=\s*"([^"]+)"')
-    if ($declaredMvidMatch.Success) { $declaredMvid = $declaredMvidMatch.Groups[1].Value.ToUpperInvariant() }
+if (-not (Test-Path -LiteralPath $compatPath)) {
+    $problems.Add('target MVID: ' + $compatPath + ' not found; the declared supported target cannot be checked')
+} else {
+    $compatText = Get-Content -LiteralPath $compatPath -Raw -Encoding UTF8
+    foreach ($declaredMatch in [regex]::Matches($compatText, 'VerifiedGameMvid\s*=\s*"([^"]*)"')) {
+        $declaredMvidValues += $declaredMatch.Groups[1].Value
+    }
+    if ($declaredMvidValues.Count -eq 0) {
+        $problems.Add('target MVID: ' + $compatPath + ' does not declare VerifiedGameMvid')
+    } elseif ($declaredMvidValues.Count -gt 1) {
+        $problems.Add('target MVID: ' + $compatPath + ' declares VerifiedGameMvid ' + $declaredMvidValues.Count + ' times')
+    } elseif ($declaredMvidValues[0] -notmatch '^[0-9A-Fa-f]{32}$') {
+        $problems.Add('target MVID: declared VerifiedGameMvid "' + $declaredMvidValues[0] + '" is not a 32-digit hex MVID')
+    } else {
+        $declaredMvid = $declaredMvidValues[0].ToUpperInvariant()
+    }
 }
 if ($declaredMvid -ne '') {
     if ($liveMvid -ne $declaredMvid) {
@@ -114,8 +131,6 @@ if ($declaredMvid -ne '') {
     if ($liveMvid -eq $declaredMvid -and $ver.GameMvid -eq $declaredMvid) {
         Write-Host ('OK: GameMvid matches the declared supported target (' + $declaredMvid + ')')
     }
-} else {
-    Write-Host 'WARN: Compatibility.cs does not declare VerifiedGameMvid; the target build was not checked.'
 }
 
 # --------------------------------------------------------------- verdict

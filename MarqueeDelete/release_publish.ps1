@@ -203,11 +203,14 @@ try {
     Assert-FreshArtifact -Path (Join-Path $root 'dist\MarqueeDelete.dll') -Since $buildStarted -Label "dist\MarqueeDelete.dll"
     Assert-FreshArtifact -Path (Join-Path $uiStage 'Mods\MarqueeDelete\MarqueeDelete.mjs') -Since $buildStarted -Label "UI bundle"
 
-    Write-Host "[3/5] 测试与校验" -ForegroundColor Yellow
-    Invoke-Step -Title "tests/run_tests.ps1" -FilePath $pwshExe -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'tests\run_tests.ps1')) `
-        -ShowPattern @('passed', 'Unit tests finished', 'Deletion regression', 'error', 'failed')
-    Invoke-Step -Title "tests/verify_cecil.ps1" -FilePath $pwshExe -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'tests\verify_cecil.ps1')) `
+    Write-Host "[3/5] 生成证据并校验" -ForegroundColor Yellow
+    # 顺序不能反：测试链里的 check_verification.ps1 要求 verification.json 描述「当前这份 DLL」，
+    # 所以必须先跑 Cecil 为本产物写证据，再让测试链去校验它。先跑测试的话，证据还停留在上一次
+    # 构建的版本与哈希上，测试链会在末尾以「证据不匹配」失败，而且失败点看起来像测试问题。
+    Invoke-Step -Title "tests/verify_cecil.ps1 (writes evidence for this build)" -FilePath $pwshExe -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'tests\verify_cecil.ps1')) `
         -ShowPattern @('UnresolvedCount', 'Unresolved', 'error', 'failed')
+    Invoke-Step -Title "tests/run_tests.ps1" -FilePath $pwshExe -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'tests\run_tests.ps1')) `
+        -ShowPattern @('passed', 'Unit tests finished', 'Deletion regression', 'error', 'failed', 'GameMvid')
 
     Write-Host "[4/5] 暂存到 publish/" -ForegroundColor Yellow
     Invoke-Step -Title "publish.ps1 -Mode NewVersion -DryRun" -FilePath $pwshExe -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $root 'publish.ps1'), '-Mode', 'NewVersion', '-DryRun') -ShowLast 6
