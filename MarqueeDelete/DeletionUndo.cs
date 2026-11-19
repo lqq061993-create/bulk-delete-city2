@@ -52,6 +52,13 @@ namespace MarqueeDelete
         private const int MaxRequestsPerStep = 16;
         private const double StepTimeBudgetMs = 3.0;
 
+        /// <summary>
+        /// How far a restored segment's length may drift from the recorded one and still be recognised
+        /// as this undo's own work. The game rebuilds the same course, so the drift is rounding; a player's
+        /// road between the same junctions with the same prefab is not going to land inside this by chance.
+        /// </summary>
+        private const float OwnEdgeLengthTolerance = 0.05f;
+
         private enum UndoOperationKind { Boundary, Net, Area, Building, Upgrade, Object }
         private struct UndoOperation
         {
@@ -61,6 +68,9 @@ namespace MarqueeDelete
             public UndoBuildingRecord Building;
             public UndoUpgradeRecord Upgrade;
             public UndoObjectRecord Object;
+
+            /// <summary>Position of this Net operation among all Net operations, for the verdict cache.</summary>
+            public int NetIndex;
             public bool HasOwner;
             public Entity AncestorPrefab;
             public OwnerDefinition Ancestor;
@@ -88,6 +98,14 @@ namespace MarqueeDelete
             public int StartLinks;
             /// <summary>Edges meeting the recorded end node when the segment was captured (-1 unknown).</summary>
             public int EndLinks;
+            /// <summary>
+            /// Identities (index+version) of the edges meeting the start node at capture, the segment's
+            /// own edge excluded. Null means the junction could not be read, which is not the same as an
+            /// empty set: null refuses the rebuild, an empty set says the junction really had nothing.
+            /// </summary>
+            public Entity[] StartLinkIds;
+            /// <summary>Identities of the edges meeting the end node at capture. Null means unreadable.</summary>
+            public Entity[] EndLinkIds;
             /// <summary>Lanes the segment carried at capture (-1 when unreadable). See <see cref="LaneOwnershipPolicy"/>.</summary>
             public int LaneCount;
             /// <summary>Lanes of those that named this segment as their owner at capture.</summary>
@@ -148,6 +166,26 @@ namespace MarqueeDelete
             public int Seed;
         }
 
+        /// <summary>
+        /// What a segment record actually submitted, which is not the same as the junctions it was
+        /// recorded against: when the old junction is already gone, <see cref="EmitNetRecord"/> submits
+        /// <c>Entity.Null</c> and the game builds a fresh junction there. Recognition of one's own
+        /// restored edge has to be made on the submitted endpoints for that reason.
+        /// </summary>
+        private struct EmittedNet
+        {
+            public Entity Prefab;
+            public float Length;
+            public Entity SubmittedStart;
+            public Entity SubmittedEnd;
+
+            /// <summary>Where the segment's start sat when it was captured. Used only when both submitted endpoints are unknown, so a same-prefab, same-length road far away cannot be mistaken for this one.</summary>
+            public float3 RecordedStartPos;
+
+            /// <summary>Where the segment's end sat when it was captured; see <see cref="RecordedStartPos"/>.</summary>
+            public float3 RecordedEndPos;
+        }
+
         private sealed class UndoSnapshot : IUndoSnapshotMeta
         {
             public readonly List<UndoNetRecord> Nets = new List<UndoNetRecord>();
@@ -161,6 +199,50 @@ namespace MarqueeDelete
             public int SkippedCount;
             public bool HasOwnerTimeout;
             public IEnumerator<UndoOperation> Operations;
+
+            /// <summary>
+            /// Junction verdicts decided before a resumed snapshot emits anything. Null on every batch
+            /// that is not a resume: there the restore checks junction positions only and never reads
+            /// edge identities, so no cache exists to go stale. A resume sets
+            /// <see cref="IdentityGate"/> and the next Step decides again against the city as it is
+            /// then, tolerating only the segments this snapshot emitted itself.
+            /// </summary>
+            public NetVerdictCache Verdicts;
+
+            /// <summary>
+            /// True when this snapshot is being resumed after a pause. Identity comparison of junction
+            /// edges happens on that path and on no other: the restore is supposed to trade a batch of
+            /// accuracy for stability, and the acceptance is that a road the player splices into a
+            /// paused undo is caught, while one spliced during uninterrupted batches is not.
+            /// </summary>
+            public bool IdentityGate;
+
+            /// <summary>The mask this undo is running with: the verdict pass must walk the same operations.</summary>
+            public UndoAssetMask ActiveMask;
+
+            /// <summary>
+            /// One segment this snapshot actually emitted. A pause lets the city change, so a resumed
+            /// snapshot predicts its junction verdicts again; these records are how the undo tells its
+            /// own restored edges apart from roads the player added meanwhile.
+            /// </summary>
+            public readonly List<EmittedNet> EmittedNets = new List<EmittedNet>();
+
+            /// <summary>
+            /// The <c>NetIndex</c> of every segment this snapshot emitted. The verdict pass skips them:
+            /// they were already accepted, and re-judging a segment against a junction that now holds
+            /// its own rebuilt edge would only ask the recognition heuristic again.
+            /// </summary>
+            public readonly HashSet<int> EmittedNetIndices = new HashSet<int>();
+
+            /// <summary>
+            /// The edge entity each submitted record holds, indexed like <see cref="EmittedNets"/>, or
+            /// <c>Entity.Null</c> while the record has excused nothing. It lives on the snapshot rather
+            /// than in the verdict pass so that pausing and resuming again cannot hand the record back
+            /// its allowance: a splice refused before a pause stays refused after it. A fresh start
+            /// clears the list because the history slot is reused and those claims belong to the run
+            /// that made them.
+            /// </summary>
+            public Entity[] EmittedNetClaims;
             public bool Truncated;
 
             public int RestoredCount;
@@ -206,6 +288,28 @@ namespace MarqueeDelete
         private int m_ConnectivitySkips;
         private int m_OccupiedRestores;
         private int m_LaneUnconfirmed;
+        private int m_NetIdentityRejected;
+        private int m_NetVerdictMisses;
+        private int m_NetPositionRejected;
+
+        // Junction-lookup accounting for the resume pre-pass: one snapshot of the city's junctions per
+        // pass, and one array walk per distinct recorded position (see EnsureNetVerdicts).
+        private int m_JunctionSnapshotBuilds;
+        private int m_JunctionLookups;
+        private int m_JunctionScans;
+        private int m_JunctionSnapshotNodes;
+
+        internal int JunctionSnapshotBuilds => m_JunctionSnapshotBuilds;
+        internal int JunctionLookups => m_JunctionLookups;
+        internal int JunctionScans => m_JunctionScans;
+        internal int JunctionSnapshotNodes => m_JunctionSnapshotNodes;
+
+        /// <summary>Segments refused because a recorded junction was no longer where it was recorded.</summary>
+        internal int NetPositionRejected => m_NetPositionRejected;
+
+        /// <summary>Segments refused because a junction's edges are not the edges it had when captured.</summary>
+        internal int NetIdentityRejected => m_NetIdentityRejected;
+
         private UndoBatchPolicy m_BatchPolicy = new UndoBatchPolicy();
 
         public bool HasActiveUndo => m_Tracker.HasActiveUndo;
@@ -423,8 +527,21 @@ namespace MarqueeDelete
                 return false;
             }
 
+            m_JunctionSnapshotBuilds = 0;
+            m_JunctionLookups = 0;
+            m_JunctionScans = 0;
+            m_JunctionSnapshotNodes = 0;
+
             if (isResume)
             {
+                // A pause is when the city can change: the player may link a new road into a junction
+                // this undo judged safe before pausing. Dropping the cache and raising the identity
+                // gate makes the next Step decide by identity again; its own emitted segments are told
+                // apart by <see cref="UndoSnapshot.EmittedNets"/>, so re-deciding cannot turn this
+                // undo's own work into a foreign newcomer.
+                snap.Verdicts = null;
+                snap.IdentityGate = true;
+                snap.ActiveMask = activeMask;
                 if (m_WaitingOperation.HasValue) m_OwnerWaitStarted = UnityEngine.Time.frameCount;
                 return true;
             }
@@ -443,6 +560,19 @@ namespace MarqueeDelete
             m_ConnectivitySkips = 0;
             m_OccupiedRestores = 0;
             m_LaneUnconfirmed = 0;
+            m_NetIdentityRejected = 0;
+            m_NetVerdictMisses = 0;
+            m_NetPositionRejected = 0;
+
+            // A snapshot object is reused as history moves, so a fresh start must clear what the
+            // previous use of this snapshot left behind: a stale gate would make identity checks run
+            // on a batch that is not a resume, and stale emitted records would excuse edges this run
+            // never built.
+            snap.Verdicts = null;
+            snap.IdentityGate = false;
+            snap.EmittedNets.Clear();
+            snap.EmittedNetIndices.Clear();
+            snap.EmittedNetClaims = null;
             if ((activeMask & UndoAssetMask.Buildings) != 0)
             {
                 foreach (var building in snap.Buildings)
@@ -452,6 +582,7 @@ namespace MarqueeDelete
                 }
             }
             snap.Operations = EnumerateOperations(snap, activeMask).GetEnumerator();
+            snap.ActiveMask = activeMask;
             m_NextAllowedFrame = UnityEngine.Time.frameCount;
             return true;
         }
@@ -488,6 +619,12 @@ namespace MarqueeDelete
             m_LastStepFrame = frame;
             EnsurePreExistingSnapshot(em);
             var snap = m_Tracker.ActiveSnapshot;
+
+            // Junction verdicts, on a resumed snapshot only, are taken here before it emits its first
+            // command: once a batch has landed, the junctions include edges this undo itself rebuilt,
+            // and judging them then would call our own siblings foreign newcomers. A snapshot that is
+            // not a resume keeps no cache at all - its batches check positions only.
+            EnsureNetVerdicts(em, snap);
             long started = Stopwatch.GetTimestamp();
             double budget = StepTimeBudgetMs * Stopwatch.Frequency / 1000.0;
             int attempted = 0, buildings = 0, networks = 0;
@@ -548,7 +685,35 @@ namespace MarqueeDelete
                 bool valid = false;
                 if (ownerValid) switch (op.Kind)
                 {
-                    case UndoOperationKind.Net: valid = ValidPrefab<Game.Prefabs.NetData>(em, op.Net.Prefab) && IsBezierFinite(op.Net.Curve) && NetLinksIntact(em, op.Net) && LaneEvidenceConfirmed(op.Net); if (valid) EmitNetRecord(em, ecb, op.Net, op.HasOwner, owner); break;
+                    case UndoOperationKind.Net:
+                        valid = ValidPrefab<Game.Prefabs.NetData>(em, op.Net.Prefab) && IsBezierFinite(op.Net.Curve) &&
+                                NetLinksIntact(em, op.Net, op.NetIndex, snap) && LaneEvidenceConfirmed(op.Net);
+                        if (valid)
+                        {
+                            Entity submittedStart, submittedEnd;
+                            if (EmitNetRecord(em, ecb, op.Net, op.HasOwner, owner, out submittedStart, out submittedEnd))
+                            {
+                                // Remembered so a later re-decide (after a pause) can recognise this
+                                // segment as this undo's own work instead of a road the player spliced
+                                // in. The submitted endpoints are kept, not the recorded ones: a dead
+                                // junction is submitted as Entity.Null and the game builds a new one.
+                                snap.EmittedNets.Add(new EmittedNet
+                                {
+                                    Prefab = op.Net.Prefab,
+                                    Length = op.Net.Length,
+                                    SubmittedStart = submittedStart,
+                                    SubmittedEnd = submittedEnd,
+                                    RecordedStartPos = op.Net.StartPos,
+                                    RecordedEndPos = op.Net.EndPos,
+                                });
+                                snap.EmittedNetIndices.Add(op.NetIndex);
+                            }
+                            else
+                            {
+                                valid = false;
+                            }
+                        }
+                        break;
                     case UndoOperationKind.Area: valid = ValidPrefab<Game.Prefabs.AreaData>(em, op.Area.Prefab) && op.Area.Nodes != null && op.Area.Nodes.Length >= 3; if (valid) EmitAreaRecord(em, ecb, op.Area, op.HasOwner, owner); break;
                     case UndoOperationKind.Building: valid = ValidObject(em, op.Building.Prefab, op.Building.Position, op.Building.Rotation) && !OccupiedBeforeRestore(op.Building.Prefab, op.Building.Position); if (valid) EmitBuildingRoot(em, ecb, op.Building); break;
                     case UndoOperationKind.Upgrade: valid = ValidObject(em, op.Upgrade.Prefab, op.Upgrade.Position, op.Upgrade.Rotation); if (valid) EmitUpgrade(em, ecb, op.Upgrade, owner); break;
@@ -574,9 +739,10 @@ namespace MarqueeDelete
 
         private static IEnumerable<UndoOperation> EnumerateOperations(UndoSnapshot snap, UndoAssetMask mask)
         {
+            int netIndex = 0;
             if ((mask & UndoAssetMask.Networks) != 0)
             {
-                foreach (var net in snap.Nets) yield return new UndoOperation { Kind = UndoOperationKind.Net, Net = net };
+                foreach (var net in snap.Nets) yield return new UndoOperation { Kind = UndoOperationKind.Net, Net = net, NetIndex = netIndex++ };
             }
             if ((mask & UndoAssetMask.Areas) != 0)
             {
@@ -591,7 +757,7 @@ namespace MarqueeDelete
                 {
                     var owner = new OwnerDefinition { m_Prefab = building.Prefab, m_Position = building.Position, m_Rotation = building.Rotation };
                     if (building.SubAreas != null) foreach (var area in building.SubAreas) yield return new UndoOperation { Kind = UndoOperationKind.Area, Area = area, HasOwner = true, Owner = owner };
-                    if (building.SubNets != null) foreach (var net in building.SubNets) yield return new UndoOperation { Kind = UndoOperationKind.Net, Net = net, HasOwner = true, Owner = owner };
+                    if (building.SubNets != null) foreach (var net in building.SubNets) yield return new UndoOperation { Kind = UndoOperationKind.Net, Net = net, NetIndex = netIndex++, HasOwner = true, Owner = owner };
                     if (building.Upgrades != null) foreach (var upgrade in building.Upgrades)
                     {
                         yield return new UndoOperation { Kind = UndoOperationKind.Upgrade, Upgrade = upgrade, HasOwner = true, Owner = owner };
@@ -599,7 +765,7 @@ namespace MarqueeDelete
                             yield return new UndoOperation { Kind = UndoOperationKind.Boundary };
                         var upgradeOwner = new OwnerDefinition { m_Prefab = upgrade.Prefab, m_Position = upgrade.Position, m_Rotation = upgrade.Rotation };
                         if (upgrade.SubAreas != null) foreach (var area in upgrade.SubAreas) yield return new UndoOperation { Kind = UndoOperationKind.Area, Area = area, HasOwner = true, AncestorPrefab = building.Prefab, Ancestor = owner, Owner = upgradeOwner };
-                        if (upgrade.SubNets != null) foreach (var net in upgrade.SubNets) yield return new UndoOperation { Kind = UndoOperationKind.Net, Net = net, HasOwner = true, AncestorPrefab = building.Prefab, Ancestor = owner, Owner = upgradeOwner };
+                        if (upgrade.SubNets != null) foreach (var net in upgrade.SubNets) yield return new UndoOperation { Kind = UndoOperationKind.Net, Net = net, NetIndex = netIndex++, HasOwner = true, AncestorPrefab = building.Prefab, Ancestor = owner, Owner = upgradeOwner };
                     }
                 }
             }
@@ -795,19 +961,313 @@ namespace MarqueeDelete
         }
 
         /// <summary>
-        /// Verifies the junctions this segment was recorded between are still where they were and were
-        /// not re-linked by something else, so the rebuild cannot splice into a road that changed.
+        /// One read of the city's junctions, taken once per resume pre-pass: the live junction
+        /// entities, their positions, and the answers already found for recorded positions.
         /// </summary>
-        private bool NetLinksIntact(EntityManager em, in UndoNetRecord rec)
+        private sealed class JunctionSnapshot
         {
-            if (!EndpointIntact(em, rec.StartNode, rec.StartPos, rec.StartLinks) ||
-                !EndpointIntact(em, rec.EndNode, rec.EndPos, rec.EndLinks))
+            public Entity[] Nodes;
+            public float3[] Positions;
+            public readonly Dictionary<JunctionKey, Entity> Near = new Dictionary<JunctionKey, Entity>();
+        }
+
+        /// <summary>
+        /// A recorded junction position used as a dictionary key. All three components take part,
+        /// because the lookup itself is three-dimensional: keying on XZ alone would hand the answer
+        /// found for a junction at height 0 to a junction at height 8 standing in the same spot, cache
+        /// included, so the second one would never be searched for at its own height. The value's bits
+        /// are used unchanged, so two positions share an answer only when they are the same floats.
+        /// Rounding them into a bucket would let the junction found for one position be reused for
+        /// another position farther from it, which would change verdicts; -0 is folded into +0, which
+        /// compares equal anyway.
+        /// </summary>
+        private struct JunctionKey : IEquatable<JunctionKey>
+        {
+            public long X;
+            public long Y;
+            public long Z;
+
+            public static JunctionKey Of(float3 position)
             {
-                m_ConnectivitySkips++;
+                float x = position.x == 0f ? 0f : position.x;
+                float y = position.y == 0f ? 0f : position.y;
+                float z = position.z == 0f ? 0f : position.z;
+                return new JunctionKey
+                {
+                    X = BitConverter.DoubleToInt64Bits(x),
+                    Y = BitConverter.DoubleToInt64Bits(y),
+                    Z = BitConverter.DoubleToInt64Bits(z),
+                };
+            }
+
+            public bool Equals(JunctionKey other) => X == other.X && Y == other.Y && Z == other.Z;
+            public override bool Equals(object obj) => obj is JunctionKey other && Equals(other);
+            public override int GetHashCode() => unchecked((int)(X ^ (X >> 32) ^ (Y * 397) ^ (Y >> 31) ^ (Z * 7919) ^ (Z >> 29)));
+        }
+
+        /// <summary>
+        /// Decides every junction verdict for a resumed snapshot and stores it. It does nothing on a
+        /// snapshot that is not a resume: uninterrupted batches check junction positions only, and
+        /// giving them a cache would let a stale approval outlive the batch that took it.
+        ///
+        /// The pass walks the very same operation stream the restore loop walks, so a verdict's index
+        /// is the operation's <c>NetIndex</c>. Segments this snapshot already emitted are skipped -
+        /// they were accepted once, and the junction now holds their own rebuilt edge.
+        /// </summary>
+        private void EnsureNetVerdicts(EntityManager em, UndoSnapshot snap)
+        {
+            if (!snap.IdentityGate) return;
+            if (snap.Verdicts != null) return;
+
+            int count = 0;
+            foreach (var op in EnumerateOperations(snap, snap.ActiveMask))
+            {
+                if (op.Kind != UndoOperationKind.Net || op.NetIndex < 0) continue;
+                if (op.NetIndex + 1 > count) count = op.NetIndex + 1;
+            }
+
+            var verdicts = new NetVerdictCache(count);
+
+            // Claims live on the snapshot, not in this pass. A pause ends the pass but not the undo:
+            // rebuilding the allowance every resume would hand a record back its claim, and a splice
+            // refused before the pause could be excused after it. Only a fresh start clears them.
+            Entity[] claims = EnsureEmittedClaims(snap);
+
+            // One read of the city's junctions serves the whole pass. Adjacent segments commonly share
+            // the junction that died with them, so a position is looked up once and its answer reused;
+            // without that, every dead endpoint would walk the whole city again. The pass emits
+            // nothing, so the live set cannot change while the snapshot is in use.
+            m_JunctionSnapshotBuilds++;
+            using (var query = em.CreateEntityQuery(ComponentType.ReadOnly<NetNode>()))
+            using (var nodes = query.ToEntityArray(Unity.Collections.Allocator.Temp))
+            {
+                // The array's own type is left to inference: this compiles against the game's
+                // NativeArray and against the harness stand-in alike.
+                var junctions = new JunctionSnapshot
+                {
+                    Nodes = new Entity[nodes.Length],
+                    Positions = new float3[nodes.Length],
+                };
+
+                int live = 0;
+                for (int i = 0; i < nodes.Length; i++)
+                {
+                    Entity candidate = nodes[i];
+                    if (!em.Exists(candidate) || em.HasComponent<Deleted>(candidate)) continue;
+                    junctions.Nodes[live] = candidate;
+                    junctions.Positions[live] = em.GetComponentData<NetNode>(candidate).m_Position;
+                    live++;
+                }
+
+                if (live < junctions.Nodes.Length)
+                {
+                    System.Array.Resize(ref junctions.Nodes, live);
+                    System.Array.Resize(ref junctions.Positions, live);
+                }
+
+                m_JunctionSnapshotNodes = junctions.Nodes.Length;
+
+                // Two phases, because recognition is a competition for one allowance per record.
+                // Collecting every endpoint before awarding anything makes the outcome depend on what
+                // the city holds and on how strict a match is, not on the order the segments happen to
+                // be walked: swapping two segments cannot change the result.
+                var probes = new List<EndpointProbe>();
+                foreach (var op in EnumerateOperations(snap, snap.ActiveMask))
+                {
+                    if (op.Kind != UndoOperationKind.Net || op.NetIndex < 0) continue;
+                    if (snap.EmittedNetIndices.Contains(op.NetIndex)) continue;
+                    probes.Add(ProbeEndpoint(em, junctions, op.Net, op.NetIndex, true));
+                    probes.Add(ProbeEndpoint(em, junctions, op.Net, op.NetIndex, false));
+                }
+
+                ClaimEmittedEdges(em, snap, claims, probes);
+
+                for (int i = 0; i + 1 < probes.Count; i += 2)
+                {
+                    verdicts.Set(
+                        probes[i].NetIndex,
+                        JudgeProbe(em, probes[i], claims),
+                        JudgeProbe(em, probes[i + 1], claims));
+                }
+            }
+
+            snap.Verdicts = verdicts;
+        }
+
+
+        /// <summary>
+        /// Returns the snapshot's claim list, growing it only when the snapshot emitted more segments
+        /// since the last resume. Entries already awarded are carried over untouched.
+        /// </summary>
+        private static Entity[] EnsureEmittedClaims(UndoSnapshot snap)
+        {
+            Entity[] claims = snap.EmittedNetClaims;
+            if (claims != null && claims.Length == snap.EmittedNets.Count) return claims;
+
+            Entity[] grown = new Entity[snap.EmittedNets.Count];
+            if (claims != null) System.Array.Copy(claims, grown, System.Math.Min(claims.Length, grown.Length));
+            snap.EmittedNetClaims = grown;
+            return grown;
+        }
+
+        /// <summary>What one end of a not-yet-emitted segment finds at its junction.</summary>
+        private struct EndpointProbe
+        {
+            public int NetIndex;
+            public float3 RecordedPos;
+            public int RecordedLinks;
+            public Entity[] RecordedIds;
+            public bool JunctionFound;
+            public bool HasNetNode;
+            public Entity Junction;
+            public Entity[] ActualIds;
+            public int ActualLinks;
+        }
+
+        /// <summary>
+        /// Resolves one endpoint of a pending segment to the junction it would be spliced against and
+        /// reads that junction's edges once. A recorded junction that is gone falls back to a live
+        /// junction at the recorded position, and only an empty spot stays empty.
+        /// </summary>
+        private EndpointProbe ProbeEndpoint(EntityManager em, JunctionSnapshot junctions, in UndoNetRecord rec, int netIndex, bool isStart)
+        {
+            var probe = new EndpointProbe
+            {
+                NetIndex = netIndex,
+                RecordedPos = isStart ? rec.StartPos : rec.EndPos,
+                RecordedLinks = isStart ? rec.StartLinks : rec.EndLinks,
+                RecordedIds = isStart ? rec.StartLinkIds : rec.EndLinkIds,
+            };
+
+            Entity node = isStart ? rec.StartNode : rec.EndNode;
+            if (node == Entity.Null || !em.Exists(node) || em.HasComponent<Deleted>(node))
+            {
+                Entity replacement;
+                if (!TryFindJunctionNear(junctions, probe.RecordedPos, out replacement)) return probe;
+                node = replacement;
+            }
+
+            probe.JunctionFound = true;
+            probe.Junction = node;
+            if (!em.HasComponent<NetNode>(node)) return probe;
+
+            probe.HasNetNode = true;
+            probe.ActualIds = ReadLinkIdentities(em, node, Entity.Null);
+            probe.ActualLinks = ReadLinkCount(em, node);
+            return probe;
+        }
+
+        /// <summary>
+        /// Turns one probed endpoint into a verdict. Pure: the identity work happened in the claim
+        /// phase, so this reads the junction position and compares the edge lists that are left.
+        /// </summary>
+        private static NetLinkStatus JudgeProbe(EntityManager em, in EndpointProbe probe, Entity[] claims)
+        {
+            if (!probe.JunctionFound) return NetLinkStatus.Reconnected;
+            if (!probe.HasNetNode) return NetLinkStatus.IdentityChanged;
+
+            Entity[] actualIds = probe.ActualIds;
+            int actualLinks = probe.ActualLinks;
+            if (actualIds != null && claims.Length > 0)
+            {
+                actualIds = WithoutClaimed(probe.RecordedIds, actualIds, claims);
+                actualLinks = actualIds.Length;
+            }
+
+            NetNode netNode = em.GetComponentData<NetNode>(probe.Junction);
+            return NetConnectivityPolicy.EvaluateEndpoint(
+                probe.RecordedPos.x, probe.RecordedPos.z, netNode.m_Position.x, netNode.m_Position.z,
+                probe.RecordedIds, actualIds,
+                probe.RecordedLinks, actualLinks, NetConnectivityPolicy.EndpointTolerance);
+        }
+
+        /// <summary>
+        /// Says whether the segment may be emitted. Two paths, and which one runs is decided by the
+        /// snapshot, never by the batch:
+        ///
+        /// A plain batch has no verdict cache and checks junction <em>positions</em> only. Edge
+        /// identities are not read at all there. The accepted consequence is that a road the player
+        /// links while an uninterrupted undo is running is not noticed; that is the stability this
+        /// path buys, and it is not a defect to be patched back in per batch.
+        ///
+        /// A resumed snapshot has a cache taken by <see cref="EnsureNetVerdicts"/> and reads it. A
+        /// missing entry, or an index outside the cache, is an internal invariant failure and not a
+        /// licence to look at the junction again: by then earlier batches have landed and their
+        /// rebuilt edges meet the same junctions, so a live read would refuse segments that are in
+        /// fact safe to restore. Such a segment is skipped and counted.
+        ///
+        /// The cache is not enough on its own. It answers whether the junction is still the recorded
+        /// one, not whether it is still where it was, and it is filled once per resume while the
+        /// batches that follow can still see the city move. So both ends are position-checked on the
+        /// resume path too, before the cache is consulted. That is two component reads, not an
+        /// identity read, and it is what stops a segment from being submitted against a junction the
+        /// player has since moved.
+        /// </summary>
+        private bool NetLinksIntact(EntityManager em, in UndoNetRecord rec, int netIndex, UndoSnapshot snap)
+        {
+            if (snap.Verdicts == null)
+            {
+                if (PositionAllowsRebuild(em, rec.StartNode, rec.StartPos) &&
+                    PositionAllowsRebuild(em, rec.EndNode, rec.EndPos))
+                {
+                    return true;
+                }
+
+                m_NetPositionRejected++;
                 return false;
             }
 
-            return true;
+            // The cache says "this junction is still the one that was recorded"; it cannot say the
+            // junction is still where it was. A resume judges identity once, at the moment the player
+            // resumes, and the batches that follow can still see the world move, so position is
+            // re-checked here on every batch. This is not an identity read: it is two component reads.
+            if (!PositionAllowsRebuild(em, rec.StartNode, rec.StartPos) ||
+                !PositionAllowsRebuild(em, rec.EndNode, rec.EndPos))
+            {
+                m_NetPositionRejected++;
+                return false;
+            }
+
+            NetLinkStatus start, end;
+            if (!snap.Verdicts.TryGet(netIndex, out start, out end))
+            {
+                m_NetVerdictMisses++;
+                return false;
+            }
+
+            if (NetVerdictCache.AllowsRebuild(start) && NetVerdictCache.AllowsRebuild(end))
+            {
+                return true;
+            }
+
+            if (NetVerdictCache.IsIdentityRefusal(start) || NetVerdictCache.IsIdentityRefusal(end))
+            {
+                m_NetIdentityRejected++;
+            }
+            else
+            {
+                m_ConnectivitySkips++;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The position check used on the non-resume path. A junction that is gone, or is no longer a
+        /// junction, places the course by position: there is nothing left to contradict. One that is
+        /// still there but has drifted further than
+        /// <see cref="NetConnectivityPolicy.EndpointTolerance"/> from where it was recorded is refused,
+        /// because rebuilding into it would put the segment somewhere the player never had it.
+        /// </summary>
+        private static bool PositionAllowsRebuild(EntityManager em, Entity node, float3 recorded)
+        {
+            if (node == Entity.Null || !em.Exists(node) || em.HasComponent<Deleted>(node)) return true;
+            if (!em.HasComponent<NetNode>(node)) return true;
+
+            NetNode netNode = em.GetComponentData<NetNode>(node);
+            float dx = netNode.m_Position.x - recorded.x;
+            float dz = netNode.m_Position.z - recorded.z;
+            return dx * dx + dz * dz <= NetConnectivityPolicy.EndpointTolerance * NetConnectivityPolicy.EndpointTolerance;
         }
 
         /// <summary>
@@ -829,18 +1289,286 @@ namespace MarqueeDelete
             return false;
         }
 
-        private static bool EndpointIntact(EntityManager em, Entity node, float3 recorded, int recordedLinks)
+        /// Finds a live junction standing within
+        /// <see cref="NetConnectivityPolicy.EndpointTolerance"/> of a recorded position, nearest first.
+        /// The distance is three-dimensional: junctions at the same XZ but a different height are
+        /// different places (an interchange stacks them), and a flat comparison would pick the wrong one.
+        /// Used only when the recorded junction entity is gone: a new junction at that spot is not the
+        /// one this segment was recorded against, but it is where the segment would be spliced, so its
+        /// edges decide.
+        ///
+        /// The city's junctions are read once per resume pre-pass by <see cref="EnsureNetVerdicts"/>;
+        /// this method never builds a query of its own, it only walks that snapshot. Answers are cached
+        /// per recorded position for the rest of the pass, because adjacent segments commonly record
+        /// the same dead junction. The cost is one array walk per distinct dead-junction position: with
+        /// N junctions and U distinct dead positions it is O(N) component reads plus O(U x N)
+        /// comparisons, instead of one query, one array copy and a component read per candidate for
+        /// every dead endpoint.
+        /// </summary>
+        private bool TryFindJunctionNear(JunctionSnapshot junctions, float3 recorded, out Entity found)
         {
-            // Nothing was recorded to check against, or the junction is gone and the course is placed by
-            // position: either way there is no identity left to contradict, so the rebuild proceeds.
-            if (node == Entity.Null || !em.Exists(node) || em.HasComponent<Deleted>(node)) return true;
-            if (!em.HasComponent<NetNode>(node)) return false;
+            m_JunctionLookups++;
+            JunctionKey key = JunctionKey.Of(recorded);
+            if (junctions.Near.TryGetValue(key, out found))
+            {
+                return found != Entity.Null;
+            }
 
-            NetNode netNode = em.GetComponentData<NetNode>(node);
-            NetLinkStatus status = NetConnectivityPolicy.EvaluateEndpoint(
-                recorded.x, recorded.z, netNode.m_Position.x, netNode.m_Position.z,
-                recordedLinks, ReadLinkCount(em, node), NetConnectivityPolicy.EndpointTolerance);
-            return status == NetLinkStatus.Reconnected || status == NetLinkStatus.ReconnectedReversed;
+            m_JunctionScans++;
+            found = Entity.Null;
+            float best = NetConnectivityPolicy.EndpointTolerance * NetConnectivityPolicy.EndpointTolerance;
+            for (int i = 0; i < junctions.Nodes.Length; i++)
+            {
+                // Height is part of the distance on purpose: an interchange stacks several junctions on
+                // the same XZ, and a flat comparison would settle on whichever one happens to be listed
+                // first instead of the one on the recorded ground.
+                float distance = math.distancesq(junctions.Positions[i], recorded);
+                if (distance <= best)
+                {
+                    best = distance;
+                    found = junctions.Nodes[i];
+                }
+            }
+
+            junctions.Near[key] = found;
+            return found != Entity.Null;
+        }
+
+        /// <summary>
+
+        /// <summary>True when the recording already knew this edge at the junction being judged.</summary>
+        private static bool IsRecordedLink(Entity[] recordedIds, Entity edge)
+        {
+            if (recordedIds == null) return false;
+            for (int i = 0; i < recordedIds.Length; i++)
+            {
+                if (recordedIds[i].Index == edge.Index && recordedIds[i].Version == edge.Version) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// <summary>
+        /// The shape of an edge as the game stores it, read once and reused by every tier of the
+        /// fingerprint: the prefab, the length, and the two junctions it meets.
+        /// </summary>
+        private struct EdgeShape
+        {
+            public Entity Prefab;
+            public float Length;
+            public Entity Start;
+            public Entity End;
+        }
+
+        /// <summary>One pairing of a submitted record with an edge actually standing at a judged junction.</summary>
+        private struct ClaimCandidate
+        {
+            public int Tier;
+            public int Record;
+            public Entity Edge;
+            public int Sequence;
+        }
+
+        /// <summary>
+        /// Grants each submitted record at most one edge entity for the whole prejudge, choosing
+        /// strictly before loosely.
+        ///
+        /// The old shape matched inside the per-junction walk and claimed on the spot, which made the
+        /// answer depend on the order segments happened to be visited: a record could be taken by a
+        /// loose one-end match before a second junction offered the exact edge that match was for.
+        /// Nothing in the city changed between those two orders, yet the outcome did. So every pairing
+        /// is collected first, sorted by tier and then by record and edge identity, and only then
+        /// awarded. An exact match of both submitted junctions therefore always precedes a one-ended
+        /// match, which always precedes a geometric one, whatever the operation order is.
+        ///
+        /// An edge the recording already listed at a judged junction is a neighbour the deletion left
+        /// behind, not something this undo built: it never competes for an allowance.
+        /// </summary>
+        private static void ClaimEmittedEdges(EntityManager em, UndoSnapshot snap, Entity[] claims, List<EndpointProbe> probes)
+        {
+            if (snap.EmittedNets.Count == 0) return;
+
+            var candidates = new List<ClaimCandidate>();
+            int sequence = 0;
+            for (int p = 0; p < probes.Count; p++)
+            {
+                EndpointProbe probe = probes[p];
+                if (!probe.HasNetNode || probe.ActualIds == null) continue;
+
+                for (int e = 0; e < probe.ActualIds.Length; e++)
+                {
+                    Entity edge = probe.ActualIds[e];
+                    if (IsRecordedLink(probe.RecordedIds, edge)) continue;
+                    if (IsClaimed(claims, edge)) continue;
+
+                    EdgeShape shape;
+                    if (!TryReadEdgeShape(em, edge, out shape)) continue;
+
+                    for (int i = 0; i < snap.EmittedNets.Count; i++)
+                    {
+                        if (claims[i] != Entity.Null) continue;
+                        int tier = ClaimTier(em, shape, snap.EmittedNets[i]);
+                        if (tier == 0) continue;
+                        candidates.Add(new ClaimCandidate { Tier = tier, Record = i, Edge = edge, Sequence = sequence++ });
+                    }
+                }
+            }
+
+            candidates.Sort(CompareCandidates);
+
+            for (int c = 0; c < candidates.Count; c++)
+            {
+                ClaimCandidate candidate = candidates[c];
+                if (claims[candidate.Record] != Entity.Null) continue;
+                if (IsClaimed(claims, candidate.Edge)) continue;
+                claims[candidate.Record] = candidate.Edge;
+            }
+        }
+
+        private static int CompareCandidates(ClaimCandidate a, ClaimCandidate b)
+        {
+            if (a.Tier != b.Tier) return a.Tier < b.Tier ? -1 : 1;
+            if (a.Record != b.Record) return a.Record < b.Record ? -1 : 1;
+            if (a.Edge.Index != b.Edge.Index) return a.Edge.Index < b.Edge.Index ? -1 : 1;
+            if (a.Edge.Version != b.Edge.Version) return a.Edge.Version < b.Edge.Version ? -1 : 1;
+            if (a.Sequence != b.Sequence) return a.Sequence < b.Sequence ? -1 : 1;
+            return 0;
+        }
+
+        private static bool TryReadEdgeShape(EntityManager em, Entity edge, out EdgeShape shape)
+        {
+            shape = default;
+            if (edge == Entity.Null || !em.Exists(edge) || !em.HasComponent<Edge>(edge) ||
+                !em.HasComponent<Curve>(edge) || !em.HasComponent<PrefabRef>(edge))
+            {
+                return false;
+            }
+
+            float length = em.GetComponentData<Curve>(edge).m_Length;
+            if (!math.isfinite(length)) return false;
+
+            Game.Net.Edge links = em.GetComponentData<Edge>(edge);
+            shape.Prefab = em.GetComponentData<PrefabRef>(edge).m_Prefab;
+            shape.Length = length;
+            shape.Start = links.m_Start;
+            shape.End = links.m_End;
+            return true;
+        }
+
+        /// <summary>
+        /// Which widening of the fingerprint an edge satisfies for one record, or 0 for none. 1 is the
+        /// exact pair of submitted junctions, 2 is the single submitted junction, 3 is the geometry of
+        /// a record that submitted no junction at all. Strictness is a number here so that the award
+        /// can be ordered by it; the matching itself is the same evidence the restore documents.
+        /// </summary>
+        private static int ClaimTier(EntityManager em, in EdgeShape shape, in EmittedNet emitted)
+        {
+            if (emitted.Prefab != shape.Prefab) return 0;
+            if (math.abs(shape.Length - emitted.Length) > OwnEdgeLengthTolerance) return 0;
+
+            bool startUnknown = emitted.SubmittedStart == Entity.Null;
+            bool endUnknown = emitted.SubmittedEnd == Entity.Null;
+
+            if (!startUnknown && !endUnknown)
+            {
+                bool forward = shape.Start == emitted.SubmittedStart && shape.End == emitted.SubmittedEnd;
+                bool reverse = shape.Start == emitted.SubmittedEnd && shape.End == emitted.SubmittedStart;
+                return (forward || reverse) ? 1 : 0;
+            }
+
+            if (startUnknown ^ endUnknown)
+            {
+                Entity known = startUnknown ? emitted.SubmittedEnd : emitted.SubmittedStart;
+                return (shape.Start == known || shape.End == known) ? 2 : 0;
+            }
+
+            return EdgeMeetsRecordedGeometry(em, shape, emitted) ? 3 : 0;
+        }
+
+        /// <summary>
+        /// Drops the edges a submitted record has already excused. Null in, null out: an unreadable
+        /// junction stays unreadable.
+        ///
+        /// An edge that <paramref name="recordedIds"/> already lists met this junction when the segment
+        /// was captured, so it is a neighbour the deletion left in place: it is kept, and it never took
+        /// part in a claim either. Everything the submitted records hold is excused; everything else is
+        /// the player's and stays in the list for the comparison to refuse.
+        /// </summary>
+        private static Entity[] WithoutClaimed(Entity[] recordedIds, Entity[] actualIds, Entity[] claims)
+        {
+            int kept = 0;
+            for (int i = 0; i < actualIds.Length; i++)
+            {
+                Entity edge = actualIds[i];
+                if (IsRecordedLink(recordedIds, edge) || !IsClaimed(claims, edge))
+                {
+                    actualIds[kept++] = edge;
+                }
+            }
+
+            if (kept == actualIds.Length) return actualIds;
+            if (kept == 0) return System.Array.Empty<Entity>();
+
+            Entity[] trimmed = new Entity[kept];
+            System.Array.Copy(actualIds, trimmed, kept);
+            return trimmed;
+        }
+
+        /// <summary>True when some submitted record already holds this edge.</summary>
+        private static bool IsClaimed(Entity[] claims, Entity edge)
+        {
+            if (claims == null) return false;
+            for (int i = 0; i < claims.Length; i++)
+            {
+                if (claims[i] == Entity.Null) continue;
+                if (claims[i].Index == edge.Index && claims[i].Version == edge.Version) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// True when the edge stands where the recorded segment stood at <em>both</em> ends, in either
+        /// direction, within <see cref="NetConnectivityPolicy.EndpointTolerance"/> in three dimensions.
+        /// One end alone is not enough: it only says the road is near one of the recorded junctions, and
+        /// a road leaving that junction the other way satisfies it while occupying the ground this
+        /// segment needs. Height is part of the distance because an interchange stacks junctions at one
+        /// XZ, and a rebuilt junction keeps the recorded ground position.
+        ///
+        /// Both ends inside the tolerance still says nothing about the road between them: the curve is
+        /// not compared, so a road the player built over the same ground, leaving the same two rebuilt
+        /// junctions with the same prefab and a near-identical length, is accepted as this undo's own.
+        /// This case narrows the earlier single-ended test; it does not remove the misidentification.
+        /// </summary>
+        private static bool EdgeMeetsRecordedGeometry(EntityManager em, in EdgeShape shape, in EmittedNet emitted)
+        {
+            if (!TryReadJunctionPosition(em, shape.Start, out float3 start)) return false;
+            if (!TryReadJunctionPosition(em, shape.End, out float3 end)) return false;
+
+            float tolerance = NetConnectivityPolicy.EndpointTolerance;
+            bool forward = Distance3(start, emitted.RecordedStartPos) <= tolerance &&
+                           Distance3(end, emitted.RecordedEndPos) <= tolerance;
+            bool reverse = Distance3(start, emitted.RecordedEndPos) <= tolerance &&
+                           Distance3(end, emitted.RecordedStartPos) <= tolerance;
+            return forward || reverse;
+        }
+
+        private static bool TryReadJunctionPosition(EntityManager em, Entity node, out float3 position)
+        {
+            position = default;
+            if (node == Entity.Null || !em.Exists(node) || em.HasComponent<Deleted>(node) ||
+                !em.HasComponent<NetNode>(node)) return false;
+            position = em.GetComponentData<NetNode>(node).m_Position;
+            return true;
+        }
+
+        private static float Distance3(float3 a, float3 b)
+        {
+            float dx = a.x - b.x;
+            float dy = a.y - b.y;
+            float dz = a.z - b.z;
+            return math.sqrt(dx * dx + dy * dy + dz * dz);
         }
 
         private static bool OwnerMatches(EntityManager em, Entity entity, OwnerDefinition definition)
@@ -942,6 +1670,8 @@ namespace MarqueeDelete
                 StartLinks = ReadLinkCount(em, edge.m_Start),
                 EndLinks = ReadLinkCount(em, edge.m_End),
             };
+            rec.StartLinkIds = ReadLinkIdentities(em, edge.m_Start, entity);
+            rec.EndLinkIds = ReadLinkIdentities(em, edge.m_End, entity);
             ReadLaneEvidence(em, entity, out rec.LaneCount, out rec.LaneOwned, out rec.LaneForeign);
             return true;
         }
@@ -1007,6 +1737,63 @@ namespace MarqueeDelete
         }
 
         /// <summary>
+        /// Records which edges met a junction, by index and version, leaving out the segment being
+        /// captured. Returns null when the junction cannot be read at all: an unreadable junction is
+        /// missing evidence, while an empty array would claim the junction held nothing, which is a
+        /// far stronger statement. The two must not collapse into each other.
+        /// Sorted so equal junctions always produce equal arrays, which keeps captured records
+        /// comparable and the snapshot deterministic.
+        /// </summary>
+        private static Entity[] ReadLinkIdentities(EntityManager em, Entity node, Entity self)
+        {
+            if (node == Entity.Null || !em.Exists(node) || !em.HasBuffer<ConnectedEdge>(node))
+            {
+                return null;
+            }
+
+            DynamicBuffer<ConnectedEdge> links = em.GetBuffer<ConnectedEdge>(node, true);
+            int count = 0;
+            for (int i = 0; i < links.Length; i++)
+            {
+                if (IsLinkCandidate(em, links[i].m_Edge, self))
+                {
+                    count++;
+                }
+            }
+
+            if (count == 0)
+            {
+                return System.Array.Empty<Entity>();
+            }
+
+            var ids = new Entity[count];
+            int at = 0;
+            for (int i = 0; i < links.Length; i++)
+            {
+                Entity edge = links[i].m_Edge;
+                if (IsLinkCandidate(em, edge, self))
+                {
+                    ids[at++] = edge;
+                }
+            }
+
+            System.Array.Sort(ids, CompareLinkIdentity);
+            return ids;
+        }
+
+        private static bool IsLinkCandidate(EntityManager em, Entity edge, Entity self)
+        {
+            return edge != Entity.Null && edge != self && em.Exists(edge) && !em.HasComponent<Deleted>(edge);
+        }
+
+        private static int CompareLinkIdentity(Entity a, Entity b)
+        {
+            if (a.Index != b.Index) return a.Index < b.Index ? -1 : 1;
+            if (a.Version != b.Version) return a.Version < b.Version ? -1 : 1;
+            return 0;
+        }
+
+        /// <summary>
         /// Writes what the restore actually managed and what it refused, so the save/reload check has
         /// the same numbers the player was shown.
         /// </summary>
@@ -1016,7 +1803,8 @@ namespace MarqueeDelete
             MarqueeDeleteToolSystem.AppendStatusLine(
                 $"[State: undo-restore, Restored: {snap.RestoredCount}, Skipped: {snap.SkippedCount}, Total: {snap.TotalCount}, " +
                 $"AmbiguousOwners: {m_AmbiguousOwners}, ConnectivitySkips: {m_ConnectivitySkips}, OccupiedLots: {m_OccupiedRestores}, " +
-                $"LaneUnconfirmed: {m_LaneUnconfirmed}]");
+                $"LaneUnconfirmed: {m_LaneUnconfirmed}, NetIdentityRejected: {m_NetIdentityRejected}, " +
+                $"NetPositionRejected: {m_NetPositionRejected}, NetVerdictMiss: {m_NetVerdictMisses}]");
         }
 
         private static bool TryCaptureAreaRecord(EntityManager em, Entity entity, out UndoAreaRecord rec)
@@ -1334,16 +2122,20 @@ namespace MarqueeDelete
             return true;
         }
 
-        private static void EmitNetRecord(
+        private static bool EmitNetRecord(
             EntityManager em,
             EntityCommandBuffer ecb,
             in UndoNetRecord rec,
             bool hasOwner,
-            Entity ownerEntity)
+            Entity ownerEntity,
+            out Entity submittedStart,
+            out Entity submittedEnd)
         {
+            submittedStart = Entity.Null;
+            submittedEnd = Entity.Null;
             if (rec.Prefab == Entity.Null || !em.Exists(rec.Prefab))
             {
-                return;
+                return false;
             }
 
             Entity startEntity = (!hasOwner && rec.StartNode != Entity.Null && em.Exists(rec.StartNode) && !em.HasComponent<Deleted>(rec.StartNode))
@@ -1418,6 +2210,9 @@ namespace MarqueeDelete
             }
             ecb.AddComponent<Updated>(carrier);
             ecb.AddComponent<Deleted>(carrier);
+            submittedStart = startEntity;
+            submittedEnd = endEntity;
+            return true;
         }
 
         private static void EmitAreaRecord(

@@ -289,6 +289,12 @@ namespace MarqueeDelete
         ReconnectedReversed,
         Moved,
         ForeignSplice,
+
+        /// <summary>The junction's edge identities were never recorded, or cannot be read now.</summary>
+        IdentityUnknown,
+
+        /// <summary>An edge that was not recorded now meets the junction, or an edge changed version.</summary>
+        IdentityChanged,
     }
 
     /// <summary>
@@ -365,12 +371,138 @@ namespace MarqueeDelete
             return NetLinkStatus.Reconnected;
         }
 
+        /// <summary>
+        /// The same endpoint check, against the identities of the edges that met the junction. A count
+        /// cannot tell a junction nobody touched from one that lost its edges and was re-linked by
+        /// something else: two edges meeting a node are two edges meeting a node, whatever they are.
+        /// So when the capture recorded which edges met the node, the junction is accepted only if
+        /// every edge meeting it now is one of those, by index and version.
+        ///
+        /// A recorded edge that is merely gone is not held against the segment: siblings deleted in
+        /// the same demolition are gone by design, and their absence splices nothing. An unrecorded
+        /// newcomer is refused, because a road attached there after the capture is exactly the case
+        /// this check exists for.
+        /// </summary>
+        internal static NetLinkStatus EvaluateEndpoint(
+            float recordedX,
+            float recordedZ,
+            float actualX,
+            float actualZ,
+            Entity[] recordedLinkIds,
+            Entity[] actualLinkIds,
+            int recordedAdjacentEdges,
+            int actualAdjacentEdges,
+            float tolerance)
+        {
+            if (tolerance <= 0f) tolerance = EndpointTolerance;
+
+            if (!Near(recordedX, recordedZ, actualX, actualZ, tolerance))
+            {
+                return NetLinkStatus.Moved;
+            }
+
+            // Nothing to compare against: the capture could not read the junction, or it cannot be
+            // read now. Either way this endpoint is unproven and is not counted as reconnected.
+            if (recordedLinkIds == null || actualLinkIds == null)
+            {
+                return NetLinkStatus.IdentityUnknown;
+            }
+
+            // Reject on counts before walking identities: more edges than the capture included the
+            // segment's own one means at least one newcomer, whatever its identity turns out to be.
+            if (recordedAdjacentEdges >= 0 && actualAdjacentEdges > recordedAdjacentEdges)
+            {
+                return NetLinkStatus.IdentityChanged;
+            }
+
+            for (int i = 0; i < actualLinkIds.Length; i++)
+            {
+                if (!ContainsLink(recordedLinkIds, actualLinkIds[i]))
+                {
+                    return NetLinkStatus.IdentityChanged;
+                }
+            }
+
+            return NetLinkStatus.Reconnected;
+        }
+
+        /// <summary>
+        /// Compares index and version explicitly instead of relying on <c>Entity.Equals</c>: entity
+        /// identity is both halves, and a caller that compares only one would accept a recycled slot.
+        /// </summary>
+        private static bool ContainsLink(Entity[] links, Entity candidate)
+        {
+            for (int i = 0; i < links.Length; i++)
+            {
+                if (links[i].Index == candidate.Index && links[i].Version == candidate.Version)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static bool Near(float ax, float az, float bx, float bz, float tolerance)
         {
             float dx = ax - bx;
             float dz = az - bz;
             return dx * dx + dz * dz <= tolerance * tolerance;
         }
+    }
+
+    /// <summary>
+    /// Junction verdicts taken once, before an undo emits anything, and reused for every later batch of
+    /// the same snapshot. Re-reading the junctions per batch would make a segment's own siblings - edges
+    /// this same undo has just rebuilt - look like unrecorded newcomers, so a network restored over
+    /// several batches would lose every segment after the first one in each batch.
+    ///
+    /// The verdict keeps the four outcomes the rebuild has to tell apart: reusable (Reconnected /
+    /// ReconnectedReversed), identity unknown, identity changed, and junction moved.
+    /// </summary>
+    internal sealed class NetVerdictCache
+    {
+        private readonly NetLinkStatus[] m_Start;
+        private readonly NetLinkStatus[] m_End;
+
+        internal NetVerdictCache(int count)
+        {
+            if (count < 0) count = 0;
+            m_Start = new NetLinkStatus[count];
+            m_End = new NetLinkStatus[count];
+            for (int i = 0; i < count; i++)
+            {
+                // An entry that was never written must not read as "reusable": unfilled means unproven.
+                m_Start[i] = NetLinkStatus.IdentityUnknown;
+                m_End[i] = NetLinkStatus.IdentityUnknown;
+            }
+        }
+
+        internal int Count => m_Start.Length;
+
+        internal void Set(int index, NetLinkStatus start, NetLinkStatus end)
+        {
+            if (index < 0 || index >= m_Start.Length) return;
+            m_Start[index] = start;
+            m_End[index] = end;
+        }
+
+        internal bool TryGet(int index, out NetLinkStatus start, out NetLinkStatus end)
+        {
+            start = NetLinkStatus.IdentityUnknown;
+            end = NetLinkStatus.IdentityUnknown;
+            if (index < 0 || index >= m_Start.Length) return false;
+            start = m_Start[index];
+            end = m_End[index];
+            return true;
+        }
+
+        internal static bool AllowsRebuild(NetLinkStatus status) =>
+            status == NetLinkStatus.Reconnected || status == NetLinkStatus.ReconnectedReversed;
+
+        /// <summary>True when the refusal is about which edges meet the junction, not about where it is.</summary>
+        internal static bool IsIdentityRefusal(NetLinkStatus status) =>
+            status == NetLinkStatus.IdentityUnknown || status == NetLinkStatus.IdentityChanged || status == NetLinkStatus.ForeignSplice;
     }
 
     /// <summary>

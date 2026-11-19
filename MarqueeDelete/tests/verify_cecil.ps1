@@ -9,7 +9,14 @@ if ($PSVersionTable.PSEdition -ne 'Core') {
     if ($null -eq $pwsh) {
         throw "pwsh (.NET 8+) is required to load Colossal.Mono.Cecil.dll cleanly."
     }
-    & $pwsh.Source -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath @args
+    # 转发调用方的参数：-File 调用方式下 $args 是空的（参数已被 param() 绑定），
+    # 只写 @args 会把 -GameInstallDir / -BaselineJson 悄悄丢掉，子进程于是回落默认目录。
+    $forward = @()
+    foreach ($key in $PSBoundParameters.Keys) {
+        $forward += ('-' + $key)
+        $forward += [string]$PSBoundParameters[$key]
+    }
+    & $pwsh.Source -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath @forward
     exit $LASTEXITCODE
 }
 
@@ -21,7 +28,9 @@ if (Test-Path (Join-Path $GameInstallDir 'Game.dll')) {
     $managed = $GameInstallDir
 } elseif (Test-Path (Join-Path $GameInstallDir 'Cities2_Data\Managed\Game.dll')) {
     $managed = Join-Path $GameInstallDir 'Cities2_Data\Managed'
-} elseif (Test-Path 'D:\steam\steamapps\common\Cities Skylines II\Cities2_Data\Managed\Game.dll') {
+} elseif (-not $PSBoundParameters.ContainsKey('GameInstallDir') -and (Test-Path 'D:\steam\steamapps\common\Cities Skylines II\Cities2_Data\Managed\Game.dll')) {
+    # 只有调用方没显式指定目录时才回落默认路径；否则「指定的目录里没有 Game.dll」
+    # 会被默认路径悄悄救回来，读不到的失败分支永远走不到。
     $managed = 'D:\steam\steamapps\common\Cities Skylines II\Cities2_Data\Managed'
 } else {
     throw "Cities Skylines II Managed directory not found at '$GameInstallDir'"
@@ -32,6 +41,54 @@ $gameDll = Join-Path $managed 'Game.dll'
 
 if (-not (Test-Path -LiteralPath $dllPath)) { throw "Mod DLL not found: $dllPath" }
 if (-not (Test-Path -LiteralPath $gameDll)) { throw "Game.dll not found: $gameDll" }
+
+# 1b. 版本锚定：先确定这份证据描述的是哪个游戏构建，再谈解析结果。
+# 版本号不是从标准版本 API 读的：Game.dll 的版本字段全是 0.0.0.0，Cities2.exe 报的是
+# Unity 自己的 2022.3.71f1。这里能证明的只是「这串版本字符串出现在 Game.dll 的字节里」，
+# 它是从文件内容中提取的，不是官方版本元数据。
+$gameVersionPattern = '\d+\.\d+\.\d+f\d+ \(\d+\.\d+[^)]*\) \[\d+\.\d+\]'
+$gameVersionCandidates = @()
+try {
+    $gameVersionBytes = [System.IO.File]::ReadAllBytes($gameDll)
+    $gameVersionText = [System.Text.Encoding]::Latin1.GetString($gameVersionBytes)
+} catch {
+    Write-Host ("无法读取 " + $gameDll + " 的内容（" + $_.Exception.Message + "），拒绝写入 verification.json。") -ForegroundColor Red
+    exit 1
+}
+# 去重必须区分大小写：PowerShell 的 @{} 默认是不区分大小写的比较，所以
+# "1.6.4f1 (1097.158a)" 和 "1.6.4f1 (1097.158A)" 会被当成同一个键合并掉，
+# 两个不同的候选只剩一个，歧义检查就永远看不到它们。这里按 Ordinal 显式比较。
+$gameVersionSeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+foreach ($match in [regex]::Matches($gameVersionText, $gameVersionPattern)) {
+    if ($gameVersionSeen.Add($match.Value)) {
+        $gameVersionCandidates += ,@($match.Value, $match.Index)
+    }
+}
+if ($gameVersionCandidates.Count -eq 0) {
+    Write-Host ("在 " + $gameDll + " 里找不到形如 1.6.4f1 (build) [rev] 的版本字符串，拒绝写入 verification.json。") -ForegroundColor Red
+    exit 1
+}
+if ($gameVersionCandidates.Count -gt 1) {
+    Write-Host ("在 " + $gameDll + " 里找到多段内容不同的版本字符串，无法确定哪一个描述本次产物，拒绝写入 verification.json：") -ForegroundColor Red
+    foreach ($candidate in $gameVersionCandidates) {
+        Write-Host ("  byte offset " + $candidate[1] + ': "' + $candidate[0] + '"')
+    }
+    exit 1
+}
+$gameVersionTextValue = $gameVersionCandidates[0][0]
+$gameVersionOffset = $gameVersionCandidates[0][1]
+$gameVersion = ([regex]::Match($gameVersionTextValue, '^\d+\.\d+\.\d+f\d+')).Value
+$gameVersionSource = 'Game.dll byte offset ' + $gameVersionOffset + ': "' + $gameVersionTextValue + '"'
+
+# 声明支持的目标版本来自 Compatibility.cs，与提取到的版本比对；两边不一致也算证据的一环。
+$declaredGameVersion = ''
+$compatSourcePath = Join-Path $root 'Compatibility.cs'
+if (Test-Path -LiteralPath $compatSourcePath) {
+    $declaredMatch = [regex]::Match((Get-Content -LiteralPath $compatSourcePath -Raw -Encoding UTF8), 'VerifiedGameVersion\s*=\s*"([^"]+)"')
+    if ($declaredMatch.Success) { $declaredGameVersion = $declaredMatch.Groups[1].Value }
+}
+$gameVersionMatchesDeclared = ($declaredGameVersion -ne '') -and ($gameVersion -eq $declaredGameVersion)
+
 
 # 2. 加载 Cecil 反射器
 $cecilAsm = [System.Reflection.Assembly]::LoadFrom((Join-Path $managed 'Colossal.Mono.Cecil.dll'))
@@ -211,10 +268,14 @@ Write-Host "================================================================`n" 
 
 # 6. 回写 verification.json
 $modMetaPath = Join-Path $root 'mod.json'
-$modVersion = if (Test-Path -LiteralPath $modMetaPath) {
-    (Get-Content -LiteralPath $modMetaPath -Raw -Encoding UTF8 | ConvertFrom-Json).version
-} else {
-    '2.7.5'
+if (-not (Test-Path -LiteralPath $modMetaPath)) {
+    Write-Host ("无法读取版本号：" + $modMetaPath + " 不存在，拒绝写入 verification.json。") -ForegroundColor Red
+    exit 1
+}
+$modVersion = (Get-Content -LiteralPath $modMetaPath -Raw -Encoding UTF8 | ConvertFrom-Json).version
+if ([string]::IsNullOrWhiteSpace($modVersion)) {
+    Write-Host ("无法读取版本号：" + $modMetaPath + ' 里没有 "version"，拒绝写入 verification.json。') -ForegroundColor Red
+    exit 1
 }
 
 $unresolvedJson = @($unresolvedList | ForEach-Object {
@@ -226,15 +287,17 @@ $unresolvedJson = @($unresolvedList | ForEach-Object {
     }
 })
 
+
 $ver = [ordered]@{
     mod = 'MarqueeDelete'
     version = $modVersion
-    gameVersion = '1.6.4f1'
+    gameVersion = $gameVersion
+    gameVersionSource = $gameVersionSource
     gameInstallDir = $managed
     GameMvid = $mvid
     GameHash = $gameHash
     ModHash = $modHash
-    builtWith = 'roslyn csc.exe (net472) + webpack 5.97.1'
+    builtWith = 'roslyn csc.exe (net472)'
     resolvedMemberReferences = $resolvedMembers
     resolvedTypeReferences = $resolvedTypes
     unresolvedMemberReferences = $unresolvedList.Count
@@ -244,18 +307,23 @@ $ver = [ordered]@{
         mvidMatch = (-not $diff.mvidChanged)
     }
     unresolvedDetails = $unresolvedJson
-    verifiedExternally = @(
-        'build.ps1 compiles MarqueeDelete.dll cleanly with 0 warnings and 0 errors',
-        'TypeScript checks and the webpack 5.97.1 UI build pass cleanly',
-        'Cecil member + type reference resolution against 1.6.4f1 Managed assemblies: 0 unresolved',
-        'Four compatibility boundaries (SearchAndPick, DeletionSubmit, UndoRebuild, UIAccess) evaluated',
-        'tests/run_tests.ps1 passes all offline unit and localization parity tests'
+    # 只写本脚本真的验证过的事实。UI 构建、单元测试、兼容边界这几项都在别处跑，
+    # 写死在这里等于让证据文件说谎：在没有 UI 包的副本里，它照样会声称 webpack 构建通过。
+    # 谁跑了那些步骤，谁就在自己的产物里报告，不要替别人签字。
+    verifiedByThisRun = @(
+        ('Cecil resolution against the installed Managed assemblies: ' + $resolvedMembers + ' member refs, ' + $resolvedTypes + ' type refs, ' + $unresolvedList.Count + ' unresolved'),
+        ('Game MVID read from the installed Game.dll: ' + $mvid + ' (' + $(if ($diff.hasBaseline) { 'recorded baseline match: ' + (-not $diff.mvidChanged) } else { 'no baseline recorded, nothing to compare against' }) + ')'),
+        ('Game version string extracted from Game.dll (not official version metadata): ' + $gameVersionSource + ' (declared supported target ' + $(if ($declaredGameVersion -ne '') { $declaredGameVersion + ', match: ' + $gameVersionMatchesDeclared } else { 'not declared in Compatibility.cs, cannot compare' }) + ')'),
+        ('Artifact hash of dist\MarqueeDelete.dll: ' + $modHash)
     )
 }
 
-$ver | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $root 'verification.json') -Encoding UTF8
-
+# verification.json 是「这个具体产物通过校验」的声明。校验没通过就不写：失败时留下它，
+# 会让 install.ps1 把一份假的「已校验」证据装进游戏。宁可没有这个文件，也不要一份假的。
 if ($unresolvedList.Count -gt 0) {
+    Write-Host ("校验未通过（unresolved " + $unresolvedList.Count + " 项），未写入 verification.json。") -ForegroundColor Red
     exit 1
 }
+
+$ver | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $root 'verification.json') -Encoding UTF8
 exit 0
