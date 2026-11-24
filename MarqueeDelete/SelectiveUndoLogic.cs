@@ -509,6 +509,14 @@ namespace MarqueeDelete
             m_FinishedNotCapturedCount = 0;
         }
 
+        public void ClearNonAlertFinishedNotice()
+        {
+            if (m_FinishedNotice == "UndoSubmitted" || m_FinishedNotice == "UndoSubmittedPartial")
+            {
+                ClearFinishedNotice();
+            }
+        }
+
         public bool DismissNotices()
         {
             bool changed = !string.IsNullOrEmpty(m_FinishedNotice) || m_CaptureFailedCount > 0;
@@ -538,6 +546,30 @@ namespace MarqueeDelete
             m_Notice = string.Empty;
             m_CaptureFailedCount = 0;
             ClearFinishedNotice();
+        }
+    }
+
+    public static class UndoRefreshLogic
+    {
+        public const float RoadNeighborLotMargin = 20f;
+        public const float RoadNeighborCenterRadius = 48f;
+        public const float DisconnectedLotMargin = 32f;
+
+        public static bool BoundsOverlapXZ(
+            float minAx, float maxAx, float minAz, float maxAz,
+            float minBx, float maxBx, float minBz, float maxBz,
+            float pad)
+        {
+            return maxAx + pad >= minBx && minAx - pad <= maxBx &&
+                   maxAz + pad >= minBz && minAz - pad <= maxBz;
+        }
+
+        public static bool IsBuildingAdjacentToRoad(float centerDistXZ, float boundsDistXZ, bool hasNoRoadEdge)
+        {
+            if (boundsDistXZ <= RoadNeighborLotMargin) return true;
+            if (centerDistXZ <= RoadNeighborCenterRadius) return true;
+            if (hasNoRoadEdge && boundsDistXZ <= DisconnectedLotMargin) return true;
+            return false;
         }
     }
 }

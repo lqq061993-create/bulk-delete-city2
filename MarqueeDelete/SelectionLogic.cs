@@ -44,6 +44,37 @@ namespace MarqueeDelete
         Other = 5,
     }
 
+    internal enum RoadFacilityMode : byte
+    {
+        None,
+        TrafficLights,
+        Crosswalks,
+    }
+
+    [Flags]
+    internal enum RoadFacilitySide : byte
+    {
+        None = 0,
+        Left = 1,
+        Right = 2,
+    }
+
+    internal static class RoadFacilityPolicy
+    {
+        internal static RoadFacilitySide CrosswalkSlot(
+            in MarqueeShapeXZ shape, CoordXZ position, bool present, bool inverted)
+        {
+            if (!present || !shape.ContainsPoint(position)) return RoadFacilitySide.None;
+            return inverted ? RoadFacilitySide.Left : RoadFacilitySide.Right;
+        }
+
+        internal static uint WithRemovalOverride(uint flags, uint addFlag, uint removeFlag) =>
+            (flags & ~addFlag) | removeFlag;
+
+        internal static bool IsIndependentCrosswalk(bool intersection, bool medianBreak, bool hasSignals, int compatibleTwoWayRoads) =>
+            intersection && !medianBreak && (!hasSignals || compatibleTwoWayRoads >= 3);
+    }
+
     [Flags]
     public enum SelectionFilterMask
     {
@@ -915,6 +946,38 @@ namespace MarqueeDelete
                 throw new ArgumentOutOfRangeException(nameof(index));
             }
             return m_Vertices[index];
+        }
+
+        /// <summary>
+        /// Extracts a pitch-invariant horizontal camera forward direction on the XZ plane.
+        /// Using <c>camera.right</c> first (<c>forward = (-right.z, right.x)</c> in Unity's
+        /// left-handed XZ basis) prevents the 90-degree top-down gimbal collapse where
+        /// <c>camera.forward</c> points straight down (0, -1, 0) and loses its XZ yaw.
+        /// </summary>
+        public static CoordXZ ResolveCameraForwardXZ(
+            float rightX, float rightZ,
+            float fwdX, float fwdZ,
+            float upX, float upZ)
+        {
+            float rLenSq = rightX * rightX + rightZ * rightZ;
+            if (rLenSq > 1e-4f && !float.IsNaN(rLenSq) && !float.IsInfinity(rLenSq))
+            {
+                return new CoordXZ(-rightZ, rightX);
+            }
+
+            float fLenSq = fwdX * fwdX + fwdZ * fwdZ;
+            if (fLenSq > 1e-4f && !float.IsNaN(fLenSq) && !float.IsInfinity(fLenSq))
+            {
+                return new CoordXZ(fwdX, fwdZ);
+            }
+
+            float uLenSq = upX * upX + upZ * upZ;
+            if (uLenSq > 1e-4f && !float.IsNaN(uLenSq) && !float.IsInfinity(uLenSq))
+            {
+                return new CoordXZ(upX, upZ);
+            }
+
+            return new CoordXZ(0f, 1f);
         }
 
         public static MarqueeShapeXZ FromPoints(CoordXZ a, CoordXZ b, CoordXZ cameraForward, bool cameraAligned)
@@ -3384,6 +3447,22 @@ namespace MarqueeDelete
             bool colorModalOpen)
         {
             return allowInput && toolOrBulldozeActive && pointerIdle && !colorModalOpen;
+        }
+
+        public static bool CanControlActiveUndo(
+            bool canUseMod,
+            bool allowInput,
+            bool pointerIdle,
+            bool importantModalOpen,
+            bool colorModalOpen,
+            bool hasActiveUndo)
+        {
+            return canUseMod &&
+                   allowInput &&
+                   pointerIdle &&
+                   !importantModalOpen &&
+                   !colorModalOpen &&
+                   hasActiveUndo;
         }
 
         /// <summary>

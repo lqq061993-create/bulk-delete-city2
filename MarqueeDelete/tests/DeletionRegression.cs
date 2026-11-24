@@ -567,6 +567,196 @@ class DeletionRegression
         Check(NetConnectivityPolicy.EvaluateEndpoint(0f, 0f, 0f, 0f, -1, 9, 0.5f) == NetLinkStatus.Reconnected,
             "An unknown captured count cannot be contradicted");
 
+        // C1: a count cannot tell a junction nobody touched from one that lost its captured edges and
+        // was re-linked by something else. Two edges meeting a node are two edges meeting a node,
+        // whatever they are, so the recorded identities are what the junction is checked against.
+        Entity linkA = new Entity { Index = 101, Version = 1 };
+        Entity linkB = new Entity { Index = 102, Version = 1 };
+        Entity linkC = new Entity { Index = 103, Version = 1 };
+        Entity linkBRecycled = new Entity { Index = 102, Version = 2 };
+        Entity[] capturedLinks = { linkA, linkB };
+
+        Check(NetConnectivityPolicy.EvaluateEndpoint(0f, 0f, 0f, 0f, capturedLinks, new[] { linkA, linkB }, 3, 2, 0.5f) == NetLinkStatus.Reconnected,
+            "A junction still holding exactly the captured edges is a clean reconnect");
+        Check(NetConnectivityPolicy.EvaluateEndpoint(0f, 0f, 0f, 0f, capturedLinks, new[] { linkA, linkC }, 3, 2, 0.5f) == NetLinkStatus.IdentityChanged,
+            "The same number of edges with a changed identity must be refused");
+        Check(NetConnectivityPolicy.EvaluateEndpoint(0f, 0f, 0f, 0f, capturedLinks, new[] { linkBRecycled }, 3, 1, 0.5f) == NetLinkStatus.IdentityChanged,
+            "A recycled entity slot is a different edge, not the captured one");
+        Check(NetConnectivityPolicy.EvaluateEndpoint(0f, 0f, 0f, 0f, capturedLinks, new[] { linkA }, 3, 1, 0.5f) == NetLinkStatus.Reconnected,
+            "A captured edge that is merely gone splices nothing");
+        Check(NetConnectivityPolicy.EvaluateEndpoint(0f, 0f, 0f, 0f, null, new[] { linkA }, 3, 1, 0.5f) == NetLinkStatus.IdentityUnknown,
+            "An unrecorded junction is unproven evidence and is refused");
+        Check(NetConnectivityPolicy.EvaluateEndpoint(0f, 0f, 0f, 0f, capturedLinks, null, 3, 1, 0.5f) == NetLinkStatus.IdentityUnknown,
+            "A junction unreadable now is unproven evidence and is refused");
+
+        // A: the verdict is taken once, before the snapshot writes anything. Two adjacent segments of
+        // one snapshot restore in different batches; the second batch sees the junction holding an edge
+        // the first batch just rebuilt, which is not among the recorded identities. Reading the junction
+        // again at that moment would call it a foreign newcomer and drop the second segment.
+        Entity linkRebuilt = new Entity { Index = 104, Version = 1 };
+        NetLinkStatus preJudged = NetConnectivityPolicy.EvaluateEndpoint(0f, 0f, 0f, 0f, capturedLinks, new[] { linkA, linkB }, 3, 2, 0.5f);
+        var verdicts = new NetVerdictCache(2);
+        verdicts.Set(0, preJudged, preJudged);
+        verdicts.Set(1, preJudged, preJudged);
+        Check(verdicts.TryGet(1, out NetLinkStatus cachedStart, out NetLinkStatus cachedEnd) &&
+              NetVerdictCache.AllowsRebuild(cachedStart) && NetVerdictCache.AllowsRebuild(cachedEnd),
+            "A verdict taken before the snapshot wrote anything stays reusable for a later batch");
+        Check(NetConnectivityPolicy.EvaluateEndpoint(0f, 0f, 0f, 0f, capturedLinks, new[] { linkA, linkB, linkRebuilt }, 3, 3, 0.5f) == NetLinkStatus.IdentityChanged,
+            "Re-reading that junction after the first batch landed would refuse the second segment - which is what the verdict cache prevents");
+        Check(!NetVerdictCache.AllowsRebuild(NetLinkStatus.IdentityChanged) &&
+              !NetVerdictCache.AllowsRebuild(NetLinkStatus.IdentityUnknown) &&
+              !NetVerdictCache.AllowsRebuild(NetLinkStatus.Moved) &&
+              NetVerdictCache.AllowsRebuild(NetLinkStatus.Reconnected) &&
+              NetVerdictCache.AllowsRebuild(NetLinkStatus.ReconnectedReversed),
+            "Only a clean reconnect allows a rebuild");
+        Check(NetVerdictCache.IsIdentityRefusal(NetLinkStatus.IdentityUnknown) &&
+              NetVerdictCache.IsIdentityRefusal(NetLinkStatus.IdentityChanged) &&
+              !NetVerdictCache.IsIdentityRefusal(NetLinkStatus.Moved),
+            "Identity refusals are counted apart from a junction that merely moved");
+
+        var refusedVerdicts = new NetVerdictCache(1);
+        refusedVerdicts.Set(0, NetLinkStatus.IdentityChanged, NetLinkStatus.Reconnected);
+        Check(refusedVerdicts.TryGet(0, out NetLinkStatus refusedStart, out _) && !NetVerdictCache.AllowsRebuild(refusedStart),
+            "A segment whose junction already failed identity at pre-judgement stays refused");
+
+        var unfilledVerdicts = new NetVerdictCache(1);
+        Check(unfilledVerdicts.TryGet(0, out NetLinkStatus unfilledStart, out _) && !NetVerdictCache.AllowsRebuild(unfilledStart),
+            "An unfilled verdict must not read as reusable");
+        Check(!unfilledVerdicts.TryGet(3, out _, out _),
+            "An index outside the cache is a miss, not a reusable verdict");
+
+        string undoSourceForVerdicts = ReadSource("DeletionUndo.cs");
+        string verdictStepBody = MethodBody(undoSourceForVerdicts, "public bool Step(EntityManager em, EntityCommandBuffer ecb, out bool completed)", 9000);
+        int prejudgeAt = verdictStepBody.IndexOf("EnsureNetVerdicts(em, snap)", StringComparison.Ordinal);
+        int emitAt = verdictStepBody.IndexOf("case UndoOperationKind.Net:", StringComparison.Ordinal);
+        Check(prejudgeAt >= 0 && emitAt >= 0 && prejudgeAt < emitAt,
+            "Resume verdicts are taken before the restore loop emits anything");
+        Check(verdictStepBody.Contains("NetLinksIntact(em, op.Net, op.NetIndex, snap)"),
+            "The net case must consult the snapshot verdicts");
+
+        // Identity comparison lives on the resume path alone. A plain batch checks junction positions
+        // and takes no verdict cache, so no approval can outlive the batch that took it.
+        string gateBody = MethodBody(undoSourceForVerdicts, "private void EnsureNetVerdicts(EntityManager em, UndoSnapshot snap)", 3000);
+        int gateAt = gateBody.IndexOf("if (!snap.IdentityGate) return;", StringComparison.Ordinal);
+        int cachedAt = gateBody.IndexOf("if (snap.Verdicts != null) return;", StringComparison.Ordinal);
+        int allocateAt = gateBody.IndexOf("new NetVerdictCache(", StringComparison.Ordinal);
+        Check(gateAt >= 0 && cachedAt > gateAt && allocateAt > gateAt,
+            "Verdicts are taken only for a snapshot that was resumed");
+        Check(CountOccurrences(undoSourceForVerdicts, "JudgeProbe(em, probes[") == 2,
+            "Junction identity is judged only by the resume pass, and always against the shared snapshot");
+
+        // The resume pass reads the city's junctions once and looks each dead position up once: a
+        // per-endpoint query would be O(dead endpoints x city), and adjacent segments share the same
+        // dead junction.
+        string prejudgeBody = MethodBody(undoSourceForVerdicts, "private void EnsureNetVerdicts(EntityManager em, UndoSnapshot snap)", 6000);
+        Check(prejudgeBody.Contains("using (var query = em.CreateEntityQuery(ComponentType.ReadOnly<NetNode>()))") &&
+              prejudgeBody.Contains("using (var nodes = query.ToEntityArray(Unity.Collections.Allocator.Temp))"),
+            "The junction snapshot owns both the query and the array it reads");
+        Check(prejudgeBody.Contains("m_JunctionSnapshotBuilds++;") &&
+              CountOccurrences(prejudgeBody, "JudgeProbe(em, probes[") == 2,
+            "One snapshot per pass serves every endpoint judged in it");
+
+        string lookupBody = MethodBody(undoSourceForVerdicts, "private bool TryFindJunctionNear(JunctionSnapshot junctions,", 2000);
+        Check(!lookupBody.Contains("CreateEntityQuery"),
+            "The junction lookup walks the pre-pass snapshot instead of building its own query");
+        Check(lookupBody.Contains("junctions.Near.TryGetValue(key, out found)") &&
+              lookupBody.Contains("junctions.Near[key] = found;"),
+            "A recorded position is looked up once and its answer reused for the rest of the pass");
+        Check(undoSourceForVerdicts.Contains("private struct JunctionKey") &&
+              undoSourceForVerdicts.Contains("BitConverter.DoubleToInt64Bits("),
+            "Position keys keep the exact value, so reusing an answer cannot move a verdict");
+
+        string resumeBody = MethodBody(undoSourceForVerdicts, "public bool StartUndo(UndoAssetMask mask)", 6000);
+        Check(resumeBody.Contains("snap.Verdicts = null;") && resumeBody.Contains("snap.IdentityGate = true;"),
+            "A resumed undo drops its verdicts and raises the identity gate");
+        Check(resumeBody.Contains("snap.IdentityGate = false;") &&
+              resumeBody.Contains("snap.EmittedNets.Clear();") &&
+              resumeBody.Contains("snap.EmittedNetIndices.Clear();"),
+            "A fresh undo clears the gate and the emitted records a reused snapshot carries");
+
+        string missBody = MethodBody(undoSourceForVerdicts, "private bool NetLinksIntact(EntityManager em, in UndoNetRecord rec, int netIndex, UndoSnapshot snap)", 3000);
+        Check(missBody.Contains("if (snap.Verdicts == null)") && missBody.Contains("PositionAllowsRebuild(em, rec.StartNode, rec.StartPos,"),
+            "A batch without verdicts checks junction positions only");
+        Check(missBody.Contains("m_NetPositionRejected++;"), "A position refusal is counted separately");
+        Check(missBody.Contains("m_NetVerdictMisses++"), "A verdict miss is counted, not guessed");
+        Check(!missBody.Contains("JudgeProbe("),
+            "A verdict miss must not fall back to reading the junction after earlier batches landed");
+
+        string emitRecordBody = MethodBody(undoSourceForVerdicts, "private bool EmitNetRecord(", 10000);
+        Check(emitRecordBody.Contains("out Entity submittedStart,") &&
+              emitRecordBody.Contains("submittedStart = startEntity;") &&
+              emitRecordBody.Contains("submittedEnd = endEntity;"),
+            "Emitting a segment reports the endpoints it actually submitted");
+        Check(verdictStepBody.Contains("snap.EmittedNets.Add(new EmittedNet") &&
+              verdictStepBody.Contains("snap.EmittedNetIndices.Add(op.NetIndex);"),
+            "An emitted segment is remembered with its submitted endpoints and its index");
+        Check(undoSourceForVerdicts.Contains("private struct EmittedNet") &&
+              undoSourceForVerdicts.Contains("public Entity SubmittedStart;") &&
+              undoSourceForVerdicts.Contains("public Entity SubmittedEnd;"),
+            "The emitted record keeps the submitted endpoints, not the recorded junctions");
+        Check(undoSourceForVerdicts.Contains("Entity known = startUnknown ? emitted.SubmittedEnd : emitted.SubmittedStart;") &&
+              undoSourceForVerdicts.Contains("return (shape.Start == known || shape.End == known) ? 2 : 0;"),
+            "A dead-end rebuild is recognised from the one endpoint that was submitted");
+        Check(undoSourceForVerdicts.Contains("return (forward || reverse) ? 1 : 0;"),
+            "An exact match of both submitted junctions is the strictest tier");
+        Check(undoSourceForVerdicts.Contains("One end alone is not enough") &&
+              undoSourceForVerdicts.Contains("does not remove the misidentification"),
+            "The geometry case documents that it compares both ends and still not the curve");
+
+        // The cache holds the verdict taken at resume; it does not hold where the junction stands now.
+        int positionCheck = missBody.IndexOf("PositionAllowsRebuild(em, rec.StartNode, rec.StartPos, NetConnectivityPolicy.EndpointTolerance", StringComparison.Ordinal);
+        int cacheRead = missBody.IndexOf("snap.Verdicts.TryGet(netIndex", StringComparison.Ordinal);
+        Check(positionCheck >= 0 && cacheRead > positionCheck,
+            "A resumed batch re-checks both junction positions before it reads the cached verdicts");
+        Check(undoSourceForVerdicts.Contains("public float3 RecordedStartPos;") &&
+              undoSourceForVerdicts.Contains("public float3 RecordedEndPos;"),
+            "The emitted record keeps the geometry of the segment it submitted for");
+        Check(verdictStepBody.Contains("RecordedStartPos = op.Net.StartPos,") &&
+              verdictStepBody.Contains("RecordedEndPos = op.Net.EndPos,"),
+            "An emitted segment records where it stood when it was captured");
+        string claimBody = MethodBody(undoSourceForVerdicts, "private static void ClaimEmittedEdges(", 5000);
+        Check(claimBody.Contains("candidates.Sort(CompareCandidates);") &&
+              claimBody.Contains("claims[candidate.Record] = candidate.Edge;"),
+            "Every pairing is collected before any claim is awarded, so walking order cannot decide it");
+        Check(claimBody.Contains("if (IsRecordedLink(probe.RecordedIds, edge)) continue;"),
+            "A neighbour the recording already knew never competes for a claim");
+        string compareBody = MethodBody(undoSourceForVerdicts, "private static int CompareCandidates(", 1400);
+        Check(compareBody.Contains("if (a.Tier != b.Tier) return a.Tier < b.Tier ? -1 : 1;") &&
+              compareBody.Contains("if (a.Record != b.Record)"),
+            "Strict matches are awarded before loose ones, and never by the order segments were walked");
+        Check(undoSourceForVerdicts.Contains("return EdgeMeetsRecordedGeometry(em, shape, emitted) ? 3 : 0;"),
+            "The geometry case is the loosest tier, so it cannot take a claim an exact match needed");
+        string geometryBody = MethodBody(undoSourceForVerdicts, "private static bool EdgeMeetsRecordedGeometry(", 2000);
+        Check(geometryBody.Contains("Distance3(start, emitted.RecordedStartPos) <= tolerance &&") &&
+              geometryBody.Contains("Distance3(end, emitted.RecordedEndPos) <= tolerance;") &&
+              geometryBody.Contains("bool reverse = "),
+            "Both ends must stand where the recorded segment stood, in either direction");
+        Check(undoSourceForVerdicts.Contains("float dy = a.y - b.y;"),
+            "The geometry distance includes height, so a stacked junction is somewhere else");
+        string trimBody = MethodBody(undoSourceForVerdicts, "private static Entity[] WithoutClaimed(", 2400);
+        Check(trimBody.Contains("Entity[] claims") &&
+              trimBody.Contains("IsRecordedLink(recordedIds, edge)") &&
+              trimBody.Contains("!IsClaimed(claims, edge)"),
+            "The filter drops what the whole prejudge claimed and never a neighbour the recording already knew");
+        string claimsBody = MethodBody(undoSourceForVerdicts, "private static Entity[] EnsureEmittedClaims(", 1400);
+        Check(claimsBody.Contains("if (claims != null && claims.Length == snap.EmittedNets.Count) return claims;") &&
+              claimsBody.Contains("snap.EmittedNetClaims = grown;"),
+            "A resume reuses the claims the snapshot already carries");
+        Check(resumeBody.Contains("snap.EmittedNetClaims = null;"),
+            "Only a fresh undo clears the claims, so a refusal before a pause stays refused after it");
+        Check(undoSourceForVerdicts.Contains("public Entity[] EmittedNetClaims;"),
+            "The claims live on the snapshot, not in the verdict pass");
+        Check(undoSourceForVerdicts.Contains("private static bool IsRecordedLink(Entity[] recordedIds, Entity edge)"),
+            "The filter can tell a neighbour that was already there from one this undo rebuilt");
+        string keyBody = MethodBody(undoSourceForVerdicts, "private struct JunctionKey : IEquatable<JunctionKey>", 1400);
+        Check(keyBody.Contains("public long Y;") &&
+              keyBody.Contains("float y = position.y == 0f ? 0f : position.y;") &&
+              keyBody.Contains("X == other.X && Y == other.Y && Z == other.Z") &&
+              keyBody.Contains("(Y * 397)"),
+            "The position key carries height too, so stacked junctions get their own answers");
+        Check(lookupBody.Contains("math.distancesq(junctions.Positions[i], recorded)"),
+            "The junction lookup compares height as well, so an overhead junction cannot hide the ground one");
+
         // C1: the same model already standing on the lot is a different building, so neither the
         // building nor its upgrades may be attached to it.
         OwnerCandidate[] lotCandidates =
@@ -867,6 +1057,39 @@ class DeletionRegression
         Check(!MethodBody(undoSource, "private struct UndoNetRecord", 1400).Contains("Lane lane") &&
               !MethodBody(undoSource, "private struct UndoNetRecord", 1400).Contains("m_SubLane"),
             "The segment record stores lane counts, never a lane entity that cannot outlive its road");
+
+        // --- v2.7.10 guards: buildings before road edges, skip-review direct delete, immediate interrupted continue, and post-restore refresh ---
+        string phaseBody = MethodBody(toolSource, "private int DeletionPhase(", 500);
+        Check(phaseBody.Contains("HasComponent<Edge>(item.Entity)) return 2;") && phaseBody.Contains("SelectionCategory.Area ? 3 : 1"),
+            "Batched deletion removes buildings/assets (phase 1) before road edges (phase 2)");
+        string continueBody = MethodBody(toolSource, "public void ContinueInterruptedDeletion(", 1800);
+        Check(continueBody.Contains("HasNewImportantBuilding(result, interrupted.Approved)"),
+            "Immediate interrupted continue still guards against newly entered important buildings");
+        string submitConfirmBody = MethodBody(toolSource, "private void SubmitConfirmedDeletion(", 1500);
+        Check(submitConfirmBody.Contains("bool hasNewImportant = HasNewImportantBuilding(current, reviewed);") &&
+              submitConfirmBody.Contains("bool needsReview = planNeedsReview || hasNewImportant;"),
+            "Confirm step enforces HasNewImportantBuilding even when SkipBatchRevalidation is active");
+        string discardBody = MethodBody(toolSource, "public void DiscardInterruptedDeletion(", 600);
+        Check(discardBody.Contains("\"deletion_observe_timeout\""),
+            "Discarding an interrupted deletion also clears observe timeout notices");
+        string finishBatchesBody = MethodBody(toolSource, "private void FinishDeletionBatches(", 850);
+        int nullGuardAt = finishBatchesBody.IndexOf("if (m_PendingAuditLog != null)", StringComparison.Ordinal);
+        int stateAssignAt = finishBatchesBody.IndexOf("m_PendingAuditLog.State = state;", StringComparison.Ordinal);
+        Check(nullGuardAt >= 0 && stateAssignAt > nullGuardAt,
+            "FinishDeletionBatches keeps all m_PendingAuditLog mutations inside null guard");
+        Check(toolSource.Contains("m_TaskSkipBatchRevalidation") && toolSource.Contains("SkipBatchRevalidation"),
+            "Batch loop honours the skip-review direct-delete option while preserving protected-object checks");
+        Check(MethodBody(toolSource, "private void SetPending(", 1200).Contains("ClearNonAlertFinishedNotice()"),
+            "Entering a new pending selection clears stale non-alert undo finished notices");
+        string tickUndoBody = MethodBody(toolSource, "public void TickUndo(", 1600);
+        Check(tickUndoBody.Contains("m_UndoRefreshDelayFrames") && tickUndoBody.Contains("FlushUndoConnectionRefresh("),
+            "TickUndo drives post-restore connection refresh every frame even when MarqueeDelete tool is inactive");
+        string preloadBody = MethodBody(toolSource, "protected override void OnGamePreload(", 1200);
+        Check(preloadBody.Contains("m_UndoRefreshDelayFrames = 0;") && preloadBody.Contains("m_UndoRefreshBuildingPositions.Clear()"),
+            "OnGamePreload clears pending post-restore connection refresh state across save loads");
+        string logPathBody = MethodBody(toolSource, "private static string[] GetLogCandidatePaths(", 1200);
+        Check(logPathBody.Contains("MarqueeDelete.status.log") && MethodBody(toolSource, "internal static void AppendStatusLine(", 2000).Contains("MaxStatusLogBytes"),
+            "Status logging writes to Logs/MarqueeDelete.status.log with size rotation");
 
         Console.WriteLine($"Deletion regression: {checks} passed (offline stand-ins; in-game playback still requires validation).");
     }

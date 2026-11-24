@@ -113,6 +113,9 @@ namespace MarqueeDelete
         public bool ConfirmBeforeDelete { get; set; }
 
         [SettingsUISection(TabGeneral, GroupBehavior)]
+        public bool SkipBatchRevalidation { get; set; }
+
+        [SettingsUISection(TabGeneral, GroupBehavior)]
         [SettingsUISlider(min = 10f, max = 500f, step = 10f)]
         public int LargeSelectionThreshold { get; set; }
 
@@ -121,6 +124,12 @@ namespace MarqueeDelete
 
         [SettingsUISection(TabGeneral, GroupBehavior)]
         public bool PlaySounds { get; set; }
+
+        [SettingsUISection(TabGeneral, GroupBehavior)]
+        public bool EnablePanelGlow { get; set; } = false;
+
+        [SettingsUISection(TabGeneral, GroupBehavior)]
+        public bool EnableUndoProgressFx { get; set; } = false;
 
         [SettingsUISection(TabGeneral, GroupBehavior)]
         public OverlayDetailLevel OverlayDetail { get; set; } = OverlayDetailLevel.Standard;
@@ -458,9 +467,12 @@ namespace MarqueeDelete
         {
             Enabled = true;
             ConfirmBeforeDelete = true;
+            SkipBatchRevalidation = false;
             LargeSelectionThreshold = 50;
             CameraAlignedMarquee = true;
             PlaySounds = true;
+            EnablePanelGlow = false;
+            EnableUndoProgressFx = false;
             SelectionMode = (int)MarqueeSelectionMode.Rectangle;
             OverlayDetail = OverlayDetailLevel.Standard;
             MaxPolygonVertices = 64;

@@ -72,10 +72,34 @@ namespace MarqueeDelete.Tests
             TestBatch5bFreehandScanlineAndAllModeTransitions();
             TestHotkeyBindingsLocalizationAndUiIcons();
             TestBatch6aPresetsNetSubfiltersAndMatchSimilar();
+            TestRoadFacilitySelection();
             TestBatch7PureLogicHistoryImpactSoloAndGates();
 
             Console.WriteLine($"Unit tests finished: passed={s_Passed}, failed={s_Failed}");
             return s_Failed == 0 ? 0 : 1;
+        }
+
+        private static void TestRoadFacilitySelection()
+        {
+            var shape = MarqueeShapeXZ.FromPoints(new CoordXZ(-1, -1), new CoordXZ(1, 1), default, false);
+            AssertEqual(RoadFacilitySide.Left, RoadFacilityPolicy.CrosswalkSlot(in shape, new CoordXZ(0, 0), true, true),
+                "A visible, inverted crossing selects the left upgrade slot");
+            AssertEqual(RoadFacilitySide.Right, RoadFacilityPolicy.CrosswalkSlot(in shape, new CoordXZ(0, 0), true, false),
+                "A visible, non-inverted crossing selects the right upgrade slot");
+            AssertEqual(RoadFacilitySide.None, RoadFacilityPolicy.CrosswalkSlot(in shape, new CoordXZ(80, 0), true, false),
+                "One road endpoint in the selection keeps the opposite crossing outside the box");
+            AssertEqual(RoadFacilitySide.None, RoadFacilityPolicy.CrosswalkSlot(in shape, new CoordXZ(0, 0), false, false),
+                "An endpoint without a visible crosswalk cannot gain a removal override");
+            AssertEqual(0x101u, RoadFacilityPolicy.WithRemovalOverride(0x81u, 0x80u, 0x100u),
+                "An explicit removal override clears its opposite and preserves unrelated upgrades");
+            AssertTrue(!RoadFacilityPolicy.IsIndependentCrosswalk(false, false, false, 2),
+                "A shared mid-block crossing cannot be planned as one independent road end");
+            AssertTrue(!RoadFacilityPolicy.IsIndependentCrosswalk(true, true, false, 3),
+                "A median-break crossing cannot be planned as one independent road end");
+            AssertTrue(!RoadFacilityPolicy.IsIndependentCrosswalk(true, false, true, 2),
+                "Paths and one-way connections cannot count as two-way road approaches for signal preservation");
+            AssertTrue(RoadFacilityPolicy.IsIndependentCrosswalk(true, false, true, 3),
+                "An ordinary signalized intersection with three compatible two-way roads supports independent removal");
         }
 
         private static void TestUndoBatchPolicy()
@@ -160,6 +184,17 @@ namespace MarqueeDelete.Tests
             // Loose AABB corner that lies OUTSIDE the rotated rectangle must be rejected
             CoordXZ looseCorner = new CoordXZ(q.MinX + 0.05f, q.MaxZ - 0.05f);
             AssertTrue(!q.ContainsPoint(looseCorner), "Cam45.LooseAabbCornerRejected");
+
+            // Straight top-down camera (pitch = 90 deg, forward=(0,-1,0)) must still recover yaw from right/up
+            CoordXZ topDown45 = MarqueeShapeXZ.ResolveCameraForwardXZ(invSqrt2, -invSqrt2, 0f, 0f, invSqrt2, invSqrt2);
+            AssertTrue(Math.Abs(topDown45.X - invSqrt2) < 1e-4f && Math.Abs(topDown45.Z - invSqrt2) < 1e-4f,
+                "CamTopDown45.YawPreservedFromRight");
+            CoordXZ topDownEast = MarqueeShapeXZ.ResolveCameraForwardXZ(0f, -1f, 0f, 0f, 1f, 0f);
+            AssertTrue(Math.Abs(topDownEast.X - 1f) < 1e-4f && Math.Abs(topDownEast.Z) < 1e-4f,
+                "CamTopDownEast.YawPreservedFromRight");
+            CoordXZ fallbackUp = MarqueeShapeXZ.ResolveCameraForwardXZ(0f, 0f, 0f, 0f, -invSqrt2, invSqrt2);
+            AssertTrue(Math.Abs(fallbackUp.X + invSqrt2) < 1e-4f && Math.Abs(fallbackUp.Z - invSqrt2) < 1e-4f,
+                "CamTopDownFallbackUp.YawPreserved");
         }
 
         private static void TestQuadPreviewMovement()
@@ -1951,6 +1986,30 @@ namespace MarqueeDelete.Tests
             AssertTrue(
                 MarqueePointerLogic.TryConsumeUiColorModalEscape(null, 1, canUse: true, colorModalOpen: true, importantModalOpen: false, allowInput: true, escapePressedThisFrame: true),
                 "ColorModal.EscapeStillWorksWhenPanelHotkeysBlocked");
+
+            // 5. Active undo pause/stop controls work globally whenever mod is usable (even outside tool & bulldoze),
+            //    while respecting modals, focus/input lock, and pointer drag state.
+            AssertTrue(
+                MarqueePointerLogic.CanControlActiveUndo(canUseMod: true, allowInput: true, pointerIdle: true, importantModalOpen: false, colorModalOpen: false, hasActiveUndo: true),
+                "UndoControl.AllowedGloballyWhileUndoActive");
+            AssertTrue(
+                !MarqueePointerLogic.CanControlActiveUndo(canUseMod: false, allowInput: true, pointerIdle: true, importantModalOpen: false, colorModalOpen: false, hasActiveUndo: true),
+                "UndoControl.BlockedWhenModUnusable");
+            AssertTrue(
+                !MarqueePointerLogic.CanControlActiveUndo(canUseMod: true, allowInput: false, pointerIdle: true, importantModalOpen: false, colorModalOpen: false, hasActiveUndo: true),
+                "UndoControl.BlockedWhenInputDisallowed");
+            AssertTrue(
+                !MarqueePointerLogic.CanControlActiveUndo(canUseMod: true, allowInput: true, pointerIdle: false, importantModalOpen: false, colorModalOpen: false, hasActiveUndo: true),
+                "UndoControl.BlockedDuringPointerBusy");
+            AssertTrue(
+                !MarqueePointerLogic.CanControlActiveUndo(canUseMod: true, allowInput: true, pointerIdle: true, importantModalOpen: true, colorModalOpen: false, hasActiveUndo: true),
+                "UndoControl.BlockedDuringImportantModal");
+            AssertTrue(
+                !MarqueePointerLogic.CanControlActiveUndo(canUseMod: true, allowInput: true, pointerIdle: true, importantModalOpen: false, colorModalOpen: true, hasActiveUndo: true),
+                "UndoControl.BlockedDuringColorModal");
+            AssertTrue(
+                !MarqueePointerLogic.CanControlActiveUndo(canUseMod: true, allowInput: true, pointerIdle: true, importantModalOpen: false, colorModalOpen: false, hasActiveUndo: false),
+                "UndoControl.BlockedWhenNoActiveUndo");
         }
 
         private static void TestDragAbortOnFocusLossAndGuards()
@@ -3512,6 +3571,15 @@ namespace MarqueeDelete.Tests
 
             var soloNone = SoloFilterPolicy.CalculateSolo(null);
             AssertTrue(!soloNone.Residential && !soloNone.Networks && !soloNone.Trees, "Solo.NullAllOff");
+
+            // 7. UndoRefreshLogic (surviving roadside building reconnect heuristics)
+            AssertTrue(UndoRefreshLogic.BoundsOverlapXZ(0f, 10f, 0f, 10f, 25f, 40f, 0f, 10f, 20f), "UndoRefresh.BoundsOverlapWithPad");
+            AssertTrue(!UndoRefreshLogic.BoundsOverlapXZ(0f, 10f, 0f, 10f, 50f, 60f, 0f, 10f, 20f), "UndoRefresh.BoundsDisjointOutsidePad");
+            AssertTrue(UndoRefreshLogic.IsBuildingAdjacentToRoad(centerDistXZ: 90f, boundsDistXZ: 12f, hasNoRoadEdge: false), "UndoRefresh.HugeFacilityLotEdgeNearRoadMatches");
+            AssertTrue(UndoRefreshLogic.IsBuildingAdjacentToRoad(centerDistXZ: 40f, boundsDistXZ: 35f, hasNoRoadEdge: false), "UndoRefresh.WideRoadBuildingCenterMatches");
+            AssertTrue(UndoRefreshLogic.IsBuildingAdjacentToRoad(centerDistXZ: 60f, boundsDistXZ: 28f, hasNoRoadEdge: true), "UndoRefresh.DisconnectedBuildingExtendedMarginMatches");
+            AssertTrue(!UndoRefreshLogic.IsBuildingAdjacentToRoad(centerDistXZ: 60f, boundsDistXZ: 28f, hasNoRoadEdge: false), "UndoRefresh.ConnectedDistantBuildingSkipped");
+            AssertTrue(!UndoRefreshLogic.IsBuildingAdjacentToRoad(centerDistXZ: 80f, boundsDistXZ: 45f, hasNoRoadEdge: true), "UndoRefresh.FarDisconnectedBuildingSkipped");
         }
     }
 }

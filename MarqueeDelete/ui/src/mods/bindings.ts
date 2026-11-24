@@ -1,9 +1,12 @@
+import { useMemo } from "react";
 import { bindValue, trigger, useValue } from "cs2/api";
 import { ColorPaletteData, DEFAULT_COLOR_PALETTE } from "./color-palette";
 
 const GROUP = "marqueedelete";
 
 export const canUse$ = bindValue<boolean>(GROUP, "canUse", false);
+export const roadFacilityMode$ = bindValue<number>(GROUP, "roadFacilityMode", 0);
+export const roadFacilitiesBusy$ = bindValue<boolean>(GROUP, "roadFacilitiesBusy", false);
 export const active$ = bindValue<boolean>(GROUP, "active", false);
 export const dragging$ = bindValue<boolean>(GROUP, "dragging", false);
 export const pending$ = bindValue<boolean>(GROUP, "pending", false);
@@ -90,6 +93,9 @@ export const reviewingInterruptedDeletion$ = bindValue<boolean>(GROUP, "reviewin
 export const polygonVertexLimit$ = bindValue<number>(GROUP, "polygonVertexLimit", 64);
 
 export const optConfirm$ = bindValue<boolean>(GROUP, "optConfirm", true);
+export const optSkipReview$ = bindValue<boolean>(GROUP, "optSkipReview", false);
+export const optPanelGlow$ = bindValue<boolean>(GROUP, "optPanelGlow", false);
+export const optUndoFx$ = bindValue<boolean>(GROUP, "optUndoFx", false);
 export const optCameraAlign$ = bindValue<boolean>(GROUP, "optCameraAlign", true);
 export const optProtectOutside$ = bindValue<boolean>(GROUP, "optProtectOutside", true);
 export const underground$ = bindValue<boolean>(GROUP, "underground", false);
@@ -138,6 +144,10 @@ export function setSelectionMode(mode: number): void {
     trigger(GROUP, "setSelectionMode", mode);
 }
 
+export function toggleRoadFacilityMode(mode: number): void {
+    trigger(GROUP, "toggleRoadFacilityMode", mode);
+}
+
 export function cycleSelectionMode(): void {
     trigger(GROUP, "cycleSelectionMode");
 }
@@ -174,6 +184,10 @@ export function confirmDelete(): void {
     trigger(GROUP, "confirm");
 }
 
+export function confirmSkipReviewDelete(): void {
+    trigger(GROUP, "confirmSkipReview");
+}
+
 export function confirmImportantDelete(): void {
     trigger(GROUP, "confirmImportant");
 }
@@ -196,6 +210,10 @@ export function restoreLastSelection(): void {
 
 export function reviewInterruptedDeletion(): void {
     trigger(GROUP, "reviewInterruptedDeletion");
+}
+
+export function continueInterruptedDeletion(): void {
+    trigger(GROUP, "continueInterruptedDeletion");
 }
 
 export function discardInterruptedDeletion(): void {
@@ -256,7 +274,14 @@ export function applyColorPreset(presetId: string): void {
 
 export function useColorPalette(): ColorPaletteData {
     const raw = useValue(colorPaletteJson$);
-    return raw ? JSON.parse(raw) as ColorPaletteData : DEFAULT_COLOR_PALETTE;
+    return useMemo(() => {
+        if (!raw) return DEFAULT_COLOR_PALETTE;
+        try {
+            return JSON.parse(raw) as ColorPaletteData;
+        } catch {
+            return DEFAULT_COLOR_PALETTE;
+        }
+    }, [raw]);
 }
 
 export function useColorModalOpen(): boolean {
@@ -335,6 +360,9 @@ export function useMarqueeToolbarState() {
         },
         options: {
             confirm: useValue(optConfirm$),
+            skipReview: useValue(optSkipReview$),
+            panelGlow: useValue(optPanelGlow$),
+            undoFx: useValue(optUndoFx$),
             cameraAlign: useValue(optCameraAlign$),
             protectOutside: useValue(optProtectOutside$),
         },
@@ -408,6 +436,9 @@ export function useMarqueeCardState() {
         impactReportRaw: useValue(impactReportRaw$),
         restoreNotice: useValue(restoreNotice$),
         confirm: useValue(optConfirm$),
+        skipReview: useValue(optSkipReview$),
+        panelGlow: useValue(optPanelGlow$),
+        undoFx: useValue(optUndoFx$),
         compatTier: useValue(compatTier$),
         compatCanSubmit: useValue(compatCanSubmit$),
         compatCanUndo: useValue(compatCanUndo$),

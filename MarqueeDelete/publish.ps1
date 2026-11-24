@@ -62,6 +62,29 @@ $uiBundle = Join-Path $root "dist\_ui_stage\Mods\$name\$name.mjs"
 if (-not (Test-Path -LiteralPath $dll)) { throw "Missing $dll - run .\build.ps1 first." }
 if (-not (Test-Path -LiteralPath $uiBundle)) { throw "Missing UI bundle $uiBundle - run 'npm run build' in ui\ with CSII_USERDATAPATH set to dist\_ui_stage." }
 
+$versionSync = Join-Path $root 'tests\verify_version_sync.ps1'
+if (Test-Path -LiteralPath $versionSync) {
+    $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
+    $psExe = if ($null -ne $pwshCmd) { $pwshCmd.Source } else { (Get-Process -Id $PID).Path }
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File $versionSync
+    if ($LASTEXITCODE -ne 0) { throw "Version mismatch across Mod.cs / mod.json / ui/mod.json / PublishConfiguration.xml." }
+}
+
+$dllItem = Get-Item -LiteralPath $dll
+$newerCs = Get-ChildItem -LiteralPath $root -Filter '*.cs' -File | Where-Object { $_.LastWriteTime -gt $dllItem.LastWriteTime }
+if ($newerCs) {
+    throw "dist\$name.dll is older than C# source files ($($newerCs[0].Name)). Re-run .\build.ps1 first."
+}
+
+$uiBundleItem = Get-Item -LiteralPath $uiBundle
+$uiInputs = @()
+if (Test-Path -LiteralPath (Join-Path $root 'ui\mod.json')) { $uiInputs += Get-Item -LiteralPath (Join-Path $root 'ui\mod.json') }
+if (Test-Path -LiteralPath (Join-Path $root 'ui\src')) { $uiInputs += Get-ChildItem -LiteralPath (Join-Path $root 'ui\src') -Recurse -File }
+$newerUi = $uiInputs | Where-Object { $_.LastWriteTime -gt $uiBundleItem.LastWriteTime }
+if ($newerUi) {
+    throw "UI bundle $uiBundle is older than UI sources ($($newerUi[0].Name)). Re-run 'npm run build' in ui\ with CSII_USERDATAPATH=$root\dist\_ui_stage."
+}
+
 $configPath = Join-Path $root 'Properties\PublishConfiguration.xml'
 if (-not (Test-Path -LiteralPath $configPath)) { throw "Missing $configPath" }
 

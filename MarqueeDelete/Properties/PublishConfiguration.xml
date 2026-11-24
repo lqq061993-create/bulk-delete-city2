@@ -114,10 +114,7 @@ Bulk Delete replaces slow, single-click bulldozing with fast, precise area clear
 	<Screenshot Value="Properties/Screenshots/concept_colors.png" />
 	<Screenshot Value="Properties/Screenshots/03-selective-undo.jpg" />
 	<Tag Value="Code Mod" />
-	<ModVersion Value="2.7.7" />
+  <ModVersion Value="2.7.1" />
 	<GameVersion Value="1.6*" />
-	<ChangeLog>- Extended game support: the mod now loads on the whole Cities: Skylines II 1.6 line instead of only 1.6.4f1.
-- Builds other than 1.6.4f1 load in compatibility mode — it is not tested on those builds, so please report anything that behaves oddly.
-- 扩展游戏版本支持：现在整个《城市：天际线 2》1.6 系列都能加载，不再只限 1.6.4f1。
-- 非 1.6.4f1 的版本以兼容模式运行——这些版本未经过测试，如果发现异常请反馈。</ChangeLog>
+	<ChangeLog>修复一些bug</ChangeLog>
 </Publish>

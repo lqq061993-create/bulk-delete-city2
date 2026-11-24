@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Colossal.Collections;
 using Colossal.Mathematics;
 using Colossal.Serialization.Entities;
 using Game;
@@ -28,6 +29,8 @@ namespace MarqueeDelete
 
         private OverlayRenderSystem m_OverlayRenderSystem;
         private TerrainSystem m_TerrainSystem;
+        private CameraUpdateSystem m_CameraUpdateSystem;
+        private bool m_InToolUpdate;
         private AudioManager m_AudioManager;
         private BulldozeToolSystem m_BulldozeToolSystem;
         private EntityQuery m_SoundQuery;
@@ -87,6 +90,15 @@ namespace MarqueeDelete
         private float m_BatchObserveDeadline;
         private int m_BatchLength = MaxBatchRoots;
         private int m_LastBatchCostMs;
+        private bool m_TaskSkipBatchRevalidation;
+        private bool m_QueuedSkipRevalidation;
+        private int m_UndoRefreshDelayFrames;
+        private readonly List<float3> m_UndoRefreshBuildingPositions = new List<float3>();
+        private readonly List<float3> m_UndoRefreshNetPositions = new List<float3>();
+        private int m_UndoDiagDelayFrames;
+        private int m_UndoDiagRestoredCount;
+        private int m_UndoDiagNeighborCount;
+        private readonly List<float3> m_UndoDiagBuildingPositions = new List<float3>();
         private BatchTaskRecord m_TaskRecord;
         private ToolOutputBarrier m_DeletionBarrier;
         private readonly DeletionUndoManager m_UndoManager = new DeletionUndoManager();
@@ -237,7 +249,7 @@ namespace MarqueeDelete
         public bool Underground => m_Underground;
         public bool IsBulldozeActive => m_ToolSystem != null && m_BulldozeToolSystem != null && m_ToolSystem.activeTool == m_BulldozeToolSystem;
         public bool HasPending => !m_Dragging && m_PendingResult != null && m_PendingResult.Count > 0;
-        public bool HasQueuedDeletion => m_QueuedDeletion != null || m_BatchedDeletion != null;
+        public bool HasQueuedDeletion => m_QueuedDeletion != null || m_BatchedDeletion != null || RoadFacilitiesBusy;
         public int InterruptedDeletionCount => m_InterruptedDeletion == null
             ? 0 : m_InterruptedDeletion.Items.Count + m_InterruptedDeletion.Nodes.Count;
 
@@ -264,7 +276,7 @@ namespace MarqueeDelete
 
         public bool TogglePickSimilar()
         {
-            if (IsReviewingInterruptedDeletion) return false;
+            if (IsReviewingInterruptedDeletion || IsEditingRoadFacilities) return false;
             if (m_Session.HasPolygonDraft)
             {
                 m_Session.PickSimilarArmed = false;
@@ -484,6 +496,7 @@ namespace MarqueeDelete
             base.OnCreate();
             m_OverlayRenderSystem = World.GetOrCreateSystemManaged<OverlayRenderSystem>();
             m_TerrainSystem = World.GetOrCreateSystemManaged<TerrainSystem>();
+            m_CameraUpdateSystem = World.GetOrCreateSystemManaged<CameraUpdateSystem>();
             m_AudioManager = World.GetOrCreateSystemManaged<AudioManager>();
             m_BulldozeToolSystem = World.GetOrCreateSystemManaged<BulldozeToolSystem>();
             m_DeletionBarrier = World.GetOrCreateSystemManaged<ToolOutputBarrier>();
@@ -535,6 +548,11 @@ namespace MarqueeDelete
 
             bool changed = m_Underground != underground;
             m_Underground = underground;
+            if (underground && IsEditingRoadFacilities)
+            {
+                FacilityMode = RoadFacilityMode.None;
+                ClearPending();
+            }
             if (m_BulldozeToolSystem != null)
             {
                 m_BulldozeToolSystem.underground = underground;
@@ -634,6 +652,7 @@ namespace MarqueeDelete
 
         protected override void OnGamePreload(Purpose purpose, GameMode mode)
         {
+            FacilityMode = RoadFacilityMode.None;
             ColorModalOpen = false;
             m_EscapeGate.Reset();
             m_Session.CancelActiveInteraction();
@@ -651,6 +670,11 @@ namespace MarqueeDelete
             m_SelectionHistory.Clear();
             m_InterruptedDeletion = null;
             SelectionCollector.ClearPrefabCache();
+            m_UndoRefreshDelayFrames = 0;
+            m_UndoRefreshBuildingPositions.Clear();
+            m_UndoRefreshNetPositions.Clear();
+            m_UndoDiagDelayFrames = 0;
+            m_UndoDiagBuildingPositions.Clear();
             m_UndoManager.ClearHistory();
             base.OnGamePreload(purpose, mode);
         }
@@ -661,12 +685,19 @@ namespace MarqueeDelete
             m_EscapeGate.Reset();
             m_Session.CancelActiveInteraction();
             ClearAssetOverlay();
+            m_PendingAuditLog = null;
+            m_UndoRefreshDelayFrames = 0;
+            m_UndoRefreshBuildingPositions.Clear();
+            m_UndoRefreshNetPositions.Clear();
+            m_UndoDiagDelayFrames = 0;
+            m_UndoDiagBuildingPositions.Clear();
             m_UndoManager.ClearHistory();
             base.OnDestroy();
         }
 
         protected override void OnStopRunning()
         {
+            FacilityMode = RoadFacilityMode.None;
             m_Session.CancelActiveInteraction();
             m_Session.PickSimilarArmed = false;
             m_PresetViewTracker.Reset();
@@ -675,6 +706,7 @@ namespace MarqueeDelete
             m_PolygonSnapActive = false;
             m_LastClosedShapeInvalid = false;
             ClearPending();
+            FlushPendingAuditLog();
             ClearBuildingOverlay();
             ClearAssetOverlay();
             requireUnderground = false;
@@ -729,17 +761,20 @@ namespace MarqueeDelete
             SetToolActive(!IsToolActive);
         }
 
-        public bool ConfirmPendingDeletion()
+        public bool ConfirmPendingDeletion() => ConfirmPendingDeletion(false);
+
+        public bool ConfirmPendingDeletion(bool forceSkipRevalidation)
         {
             if (HasActiveUndo || ColorModalOpen || m_Session.IsMouseButtonActive || HasQueuedDeletion || !CanConfirmCurrentSelection ||
                 !HasPending || m_PendingResult.AffectsProtectedObject)
                 return false;
+            m_QueuedSkipRevalidation = forceSkipRevalidation;
             if (m_PendingResult.Breakdown.ImportantBuildings > 0)
             {
                 m_ImportantModalOpen = true;
                 return false;
             }
-            return QueueDeletion();
+            return QueueDeletion(forceSkipRevalidation);
         }
 
         public bool ForceConfirmPendingDeletion()
@@ -747,12 +782,13 @@ namespace MarqueeDelete
             if (HasActiveUndo || m_Session.IsMouseButtonActive || HasQueuedDeletion || !CanConfirmCurrentSelection ||
                 !HasPending || !m_ImportantModalOpen || m_PendingResult.AffectsProtectedObject)
                 return false;
-            return QueueDeletion();
+            return QueueDeletion(m_QueuedSkipRevalidation);
         }
 
-        private bool QueueDeletion()
+        private bool QueueDeletion(bool skipRevalidation = false)
         {
             m_QueuedDeletion = m_PendingResult;
+            m_QueuedSkipRevalidation = skipRevalidation;
             m_ImportantModalOpen = false;
             return true;
         }
@@ -760,6 +796,7 @@ namespace MarqueeDelete
         public void CancelImportantModal()
         {
             m_ImportantModalOpen = false;
+            m_QueuedSkipRevalidation = false;
         }
 
         public bool ExcludeImportantBuildings()
@@ -803,6 +840,7 @@ namespace MarqueeDelete
 
         public void ClearPending()
         {
+            m_FacilityBatch = null;
             PauseDeletion("stopped");
             m_PreviewResult = null;
             m_QueuedDeletion = null;
@@ -839,6 +877,11 @@ namespace MarqueeDelete
             m_ClosedShapeVersion++;
             m_ShapeRevision++;
             bool hasVisible = m_PendingResult != null && m_PendingResult.Count > 0;
+            if (hasVisible)
+            {
+                m_LastClosedShapeInvalid = false;
+                m_UndoManager.ClearNonAlertFinishedNotice();
+            }
             bool blocked = hasVisible && m_PendingResult.AffectsProtectedObject;
             m_ImportantListRaw = hasVisible ? BuildImportantListRaw(m_PendingResult) : string.Empty;
             m_ImportantModalOpen = openImportantModal && hasVisible && !blocked && m_PendingResult.Breakdown.ImportantBuildings > 0;
@@ -870,7 +913,7 @@ namespace MarqueeDelete
 
         public void ReevaluatePending()
         {
-            if (Mod.Settings == null) return;
+            if (Mod.Settings == null || IsEditingRoadFacilities) return;
             if (m_BatchedDeletion != null)
             {
                 PauseDeletion("stopped");
@@ -920,8 +963,10 @@ namespace MarqueeDelete
         }
 
         private SelectionResult Collect(MarqueeShapeXZ shape, bool includeCascade, IReadOnlyCollection<Entity> excluded = null) =>
-            SelectionCollector.Collect(World, EntityManager, shape, Mod.Settings.BuildFilterMask(),
-                Mod.Settings.BuildSafetyOptions(), m_Underground, includeCascade, excluded);
+            IsEditingRoadFacilities
+                ? RoadFacilities.Collect(World, EntityManager, in shape, FacilityMode)
+                : SelectionCollector.Collect(World, EntityManager, shape, Mod.Settings.BuildFilterMask(),
+                    Mod.Settings.BuildSafetyOptions(), m_Underground, includeCascade, excluded);
 
         private string BuildImportantListRaw(SelectionResult res)
         {
@@ -968,7 +1013,7 @@ namespace MarqueeDelete
                 importantModalOpen: m_ImportantModalOpen,
                 colorModalOpen: ColorModalOpen,
                 hasActiveDraft: m_Session.HasPolygonDraft || m_Session.FreehandDrawing,
-                hasQueuedDeletion: m_QueuedDeletion != null || m_BatchedDeletion != null,
+                hasQueuedDeletion: HasQueuedDeletion,
                 historyCount: m_SelectionHistory.Count);
         }
 
@@ -1087,6 +1132,19 @@ namespace MarqueeDelete
 
         protected override JobHandle OnUpdate(JobHandle inputDeps)
         {
+            m_InToolUpdate = true;
+            try
+            {
+                return OnUpdateCore(inputDeps);
+            }
+            finally
+            {
+                m_InToolUpdate = false;
+            }
+        }
+
+        private JobHandle OnUpdateCore(JobHandle inputDeps)
+        {
             applyMode = ApplyMode.None;
             SyncElevationRequirements();
 
@@ -1102,17 +1160,16 @@ namespace MarqueeDelete
                 m_PendingAuditLog.FramesRemaining--;
                 if (m_PendingAuditLog.FramesRemaining <= 0)
                 {
-                    int entitiesAfter = EntityManager.UniversalQuery.CalculateEntityCount();
-                    LogDeletionStatus(
-                        m_PendingAuditLog.Selected,
-                        m_PendingAuditLog.Affected,
-                        m_PendingAuditLog.Submitted,
-                        m_PendingAuditLog.EntitiesBefore,
-                        entitiesAfter,
-                        m_PendingAuditLog.State,
-                        m_PendingAuditLog.Extra);
-                    m_PendingAuditLog = null;
+                    inputDeps.Complete();
+                    FlushPendingAuditLog();
                 }
+            }
+
+            if (RoadFacilitiesBusy)
+            {
+                inputDeps.Complete();
+                AdvanceRoadFacilities();
+                return inputDeps;
             }
 
             if (m_BatchedDeletion != null)
@@ -1150,8 +1207,10 @@ namespace MarqueeDelete
             {
                 inputDeps.Complete();
                 SelectionResult queued = m_QueuedDeletion;
+                bool skipReview = m_QueuedSkipRevalidation;
                 m_QueuedDeletion = null;
-                SubmitConfirmedDeletion(queued);
+                m_QueuedSkipRevalidation = false;
+                SubmitConfirmedDeletion(queued, skipReview);
                 return inputDeps;
             }
 
@@ -1374,7 +1433,7 @@ namespace MarqueeDelete
                 return;
             }
 
-            Camera cam = Camera.main;
+            Camera cam = ResolveActiveCamera();
             if (cam == null)
             {
                 return;
@@ -1467,17 +1526,17 @@ namespace MarqueeDelete
             m_ShapeRevision++;
             float elapsed = UnityEngine.Time.realtimeSinceStartup - started;
             int rawHits = m_PreviewResult.RawHits;
-            if (elapsed > 0.025f || rawHits > 8000)
+            if (elapsed > 0.025f || rawHits > 6000)
             {
-                m_PreviewInterval = math.clamp(math.max(elapsed * 5f, 0.25f), 0.20f, 0.45f);
+                m_PreviewInterval = math.clamp(math.max(elapsed * 5f, 0.30f), 0.25f, 0.50f);
             }
             else if (elapsed > 0.010f || rawHits > 2500)
             {
-                m_PreviewInterval = 0.16f;
+                m_PreviewInterval = 0.20f;
             }
             else
             {
-                m_PreviewInterval = 0.10f;
+                m_PreviewInterval = 0.12f;
             }
 
             SyncHighlights(m_PreviewResult);
@@ -1491,7 +1550,7 @@ namespace MarqueeDelete
                 return false;
             }
 
-            Camera cam = Camera.main;
+            Camera cam = ResolveActiveCamera();
             if (cam == null)
             {
                 return false;
@@ -1568,6 +1627,13 @@ namespace MarqueeDelete
 
             m_LastClosedShapeInvalid = false;
             SelectionResult finalResult = Collect(shape, includeCascade: true);
+            if (finalResult.FacilityTargets != null)
+            {
+                SetPending(finalResult);
+                if (HasPending) PlayUiSound(selectEntity: true);
+                return true;
+            }
+
             if (SelectionRestoreExecutionPolicy.ShouldExecuteAutoDelete(
                     allowAutoDelete,
                     finalResult.EffectiveCount,
@@ -1600,18 +1666,26 @@ namespace MarqueeDelete
             return true;
         }
 
-        private void SubmitConfirmedDeletion(SelectionResult reviewed)
+        private void SubmitConfirmedDeletion(SelectionResult reviewed, bool forceSkipRevalidation = false)
         {
+            if (reviewed.FacilityTargets != null)
+            {
+                ConfirmRoadFacilities(reviewed);
+                return;
+            }
+
             Settings settings = Mod.Settings;
             var current = SelectionCollector.Revalidate(World, EntityManager, reviewed, reviewed.Items,
                 settings.BuildFilterMask(), settings.BuildSafetyOptions(), m_Underground, reviewed.DeferredNodes);
             bool reviewing = reviewed == m_InterruptedReview;
+            bool skipReview = forceSkipRevalidation || (settings != null && settings.SkipBatchRevalidation);
 
             int threshold = settings.LargeSelectionThreshold;
-            bool needsReview = current.Plan.ChangesConfirmation(reviewed.Plan)
+            bool hasNewImportant = HasNewImportantBuilding(current, reviewed);
+            bool planNeedsReview = !skipReview && (current.Plan.ChangesConfirmation(reviewed.Plan)
                 || (!ConfirmationPolicy.NeedsLargeSelectionWarning(reviewed.EffectiveCount, threshold) &&
-                      ConfirmationPolicy.NeedsLargeSelectionWarning(current.EffectiveCount, threshold))
-                || HasNewImportantBuilding(current, reviewed);
+                      ConfirmationPolicy.NeedsLargeSelectionWarning(current.EffectiveCount, threshold)));
+            bool needsReview = planNeedsReview || hasNewImportant;
 
             if (needsReview || current.AffectsProtectedObject)
             {
@@ -1638,10 +1712,10 @@ namespace MarqueeDelete
 
             if (reviewing && current.Plan.Submitted.Count > 0) m_InterruptedDeletion = null;
             SetPending(null);
-            ExecuteDeletion(current);
+            ExecuteDeletion(current, skipReview);
         }
 
-        private void ExecuteDeletion(SelectionResult result)
+        private void ExecuteDeletion(SelectionResult result, bool skipRevalidation = false)
         {
             if (HasActiveUndo) return;
 
@@ -1669,10 +1743,13 @@ namespace MarqueeDelete
             m_UndoManager.ClearFinishedNotice();
             if (result.EffectiveCount > MaxBatchImpact || result.Plan.Submitted.Count > MaxBatchRoots)
             {
+                m_UndoManager.PrepareBatchedCapture(EntityManager, result.Plan);
                 m_BatchedDeletion = result;
                 m_DeletionItems = result.Items
                     .Where(item => !EntityManager.HasComponent<Game.Net.Node>(item.Entity))
                     .OrderBy(DeletionPhase)
+                    .ThenBy(item => item.Category == SelectionCategory.Building ? 0 : 1)
+                    .ThenBy(item => item.Entity, EntityOrder.ByIndex)
                     .ToList();
                 m_DeferredDeletionNodes = Cascade.GetApprovedNodes(EntityManager, result.Plan);
                 m_BlockedDeletionNodes = null;
@@ -1680,6 +1757,7 @@ namespace MarqueeDelete
                 m_NextDeletionItem = 0;
                 m_BatchLength = ResolveBatchSize();
                 m_LastBatchCostMs = 0;
+                m_TaskSkipBatchRevalidation = skipRevalidation || (Mod.Settings != null && Mod.Settings.SkipBatchRevalidation);
                 m_LastBatchSubmitted.Clear();
                 m_OversizedRoots.Clear();
                 m_LastBatchOutstanding = 0;
@@ -1703,8 +1781,10 @@ namespace MarqueeDelete
         private int DeletionPhase(SelectedEntityItem item)
         {
             if (item.Category == SelectionCategory.Moving) return 0;
-            if (EntityManager.HasComponent<Edge>(item.Entity)) return 1;
-            return item.Category == SelectionCategory.Area ? 3 : 2;
+            // Remove buildings/props/trees/decals BEFORE road edges so road-adjacent buildings don't
+            // trigger unnecessary orphan cascades or re-review pauses before their own batch runs.
+            if (EntityManager.HasComponent<Edge>(item.Entity)) return 2;
+            return item.Category == SelectionCategory.Area ? 3 : 1;
         }
 
         /// <summary>Remaining targets of the running task, for the progress notice.</summary>
@@ -1810,17 +1890,23 @@ namespace MarqueeDelete
                 m_TaskRecord.Kept += m_LastBatchSubmitted.Count - gone;
                 if (advance == BatchAdvance.TimedOut && gone == 0)
                 {
-                    // The observation window closed with nothing removed yet. That is a conservative
-                    // stop, not proof the game rejected the batch: deletions are deferred and can be
-                    // slower than the window. The remainder goes back to the player instead of the tool
-                    // deleting on top of a state it has not confirmed.
-                    m_TaskRecord.Review += m_LastBatchSubmitted.Count;
+                    if (!m_TaskSkipBatchRevalidation)
+                    {
+                        // The observation window closed with nothing removed yet. That is a conservative
+                        // stop, not proof the game rejected the batch: deletions are deferred and can be
+                        // slower than the window. The remainder goes back to the player instead of the tool
+                        // deleting on top of a state it has not confirmed.
+                        m_TaskRecord.Review += m_LastBatchSubmitted.Count;
+                        m_TaskRecord.Unconfirmed += m_LastBatchSubmitted.Count;
+                        LogBatchRecord("observe-timeout", m_TaskRecord);
+                        FinishBatchObservation();
+                        PauseDeletion("changed");
+                        SelectionNotice = "deletion_observe_timeout";
+                        return;
+                    }
+
                     m_TaskRecord.Unconfirmed += m_LastBatchSubmitted.Count;
-                    LogBatchRecord("observe-timeout", m_TaskRecord);
-                    FinishBatchObservation();
-                    PauseDeletion("changed");
-                    SelectionNotice = "deletion_observe_timeout";
-                    return;
+                    LogBatchRecord("observe-timeout-skip", m_TaskRecord);
                 }
 
                 // A partial result is normal: occupants and deferred removals outlive the batch. Only
@@ -1905,9 +1991,11 @@ namespace MarqueeDelete
                 length /= 2;
             }
 
-            if (batch.AffectsProtectedObject || batch.Plan.ExpandsConfirmation(approved.Plan) ||
+            if (batch.AffectsProtectedObject ||
                 HasNewImportantBuilding(batch, approved) ||
-                (!cleaningNodes && MissesLiveStaticTarget(batch, length)))
+                (!m_TaskSkipBatchRevalidation &&
+                 (batch.Plan.ExpandsConfirmation(approved.Plan) ||
+                  (!cleaningNodes && MissesLiveStaticTarget(batch, length)))))
             {
                 PauseDeletion("changed");
                 SelectionNotice = "deletion_changed";
@@ -1960,8 +2048,6 @@ namespace MarqueeDelete
                 return false;
             }
 
-            m_UndoManager.CaptureBeforeDelete(EntityManager, plan, deferUndoCommit);
-
             // The gateway re-checks the tier right before commands are written. A refusal leaves the
             // barrier's buffer empty, so the cursor must not advance.
             if (!DeletionGate.Submit(TierFor(CompatibilityGroup.DeletionSubmit), EntityManager,
@@ -1970,6 +2056,11 @@ namespace MarqueeDelete
                 AppendStatusLine("[State: deletion-blocked, Reason: " + gateReason + ", Stage: gate]");
                 return false;
             }
+
+            if (deferUndoCommit)
+                m_UndoManager.RecordSubmittedBatch(EntityManager, plan);
+            else
+                m_UndoManager.CaptureBeforeDelete(EntityManager, plan, deferCommit: false);
 
             m_PendingAuditLog.Submitted += plan.Submitted.Count;
             return true;
@@ -2132,6 +2223,54 @@ namespace MarqueeDelete
             m_InterruptedReview = m_PendingResult;
         }
 
+        public void ContinueInterruptedDeletion(bool skipRevalidation = true)
+        {
+            if (m_InterruptedDeletion == null || HasQueuedDeletion || HasActiveUndo ||
+                IsPointerBusy || IsMouseButtonBusy || ImportantModalOpen || ColorModalOpen) return;
+
+            InterruptedDeletion interrupted = m_InterruptedDeletion;
+            Settings settings = Mod.Settings;
+            var result = SelectionCollector.Revalidate(World, EntityManager, interrupted.Approved, interrupted.Items,
+                settings.BuildFilterMask(), settings.BuildSafetyOptions(), interrupted.Underground, interrupted.Nodes);
+
+            if (result.Plan.Submitted.Count == 0)
+            {
+                m_InterruptedDeletion = null;
+                m_InterruptedReview = null;
+                SetPending(null);
+                SelectionNotice = "resume_unavailable";
+                return;
+            }
+
+            bool hasNewImportant = HasNewImportantBuilding(result, interrupted.Approved);
+            if (result.AffectsProtectedObject || hasNewImportant)
+            {
+                SetUndergroundState(interrupted.Underground);
+                SetPending(
+                    result,
+                    changed: hasNewImportant && !result.AffectsProtectedObject,
+                    openImportantModal: hasNewImportant && !result.AffectsProtectedObject && result.Breakdown.ImportantBuildings > 0);
+                m_InterruptedReview = m_PendingResult;
+                return;
+            }
+
+            if (!CanSubmitDeletionNow)
+            {
+                AppendStatusLine("[State: deletion-blocked, Reason: DeletionSubmit " + TierFor(CompatibilityGroup.DeletionSubmit) + ", Stage: continue]");
+                SetUndergroundState(interrupted.Underground);
+                SetPending(result);
+                m_InterruptedReview = m_PendingResult;
+                SelectionNotice = "deletion_blocked_compat";
+                return;
+            }
+
+            m_InterruptedDeletion = null;
+            m_InterruptedReview = null;
+            SetPending(null);
+            ExecuteDeletion(result, skipRevalidation);
+            PlayUiSound(selectEntity: true);
+        }
+
         public void DiscardInterruptedDeletion()
         {
             if (m_InterruptedDeletion == null || HasQueuedDeletion || ImportantModalOpen) return;
@@ -2139,7 +2278,7 @@ namespace MarqueeDelete
             if (IsReviewingInterruptedDeletion) SetPending(null);
             m_InterruptedDeletion = null;
             if (SelectionNotice == "resume_unavailable" || SelectionNotice == "deletion_stopped" ||
-                SelectionNotice == "deletion_changed")
+                SelectionNotice == "deletion_changed" || SelectionNotice == "deletion_observe_timeout")
                 SelectionNotice = string.Empty;
         }
 
@@ -2153,12 +2292,47 @@ namespace MarqueeDelete
             m_DeferredDeletionNodes = null;
             m_BlockedDeletionNodes = null;
             m_UndoManager.CommitDeletionCapture();
-            if (m_TaskRecord != null && m_PendingAuditLog != null)
+            if (m_PendingAuditLog != null)
             {
-                m_PendingAuditLog.Extra = DescribeRecord(m_TaskRecord);
+                if (m_TaskRecord != null)
+                {
+                    m_PendingAuditLog.Extra = DescribeRecord(m_TaskRecord);
+                }
+                m_PendingAuditLog.State = state;
+                m_PendingAuditLog.FramesRemaining = 2;
             }
-            m_PendingAuditLog.State = state;
-            m_PendingAuditLog.FramesRemaining = 2;
+        }
+
+        private void FlushPendingAuditLog()
+        {
+            if (m_PendingAuditLog == null || m_BatchedDeletion != null)
+            {
+                return;
+            }
+
+            DeletionAuditLog pending = m_PendingAuditLog;
+            m_PendingAuditLog = null;
+            if (!Mod.RuntimeActive || World == null || !World.IsCreated)
+            {
+                return;
+            }
+
+            try
+            {
+                int entitiesAfter = EntityManager.UniversalQuery.CalculateEntityCount();
+                LogDeletionStatus(
+                    pending.Selected,
+                    pending.Affected,
+                    pending.Submitted,
+                    pending.EntitiesBefore,
+                    entitiesAfter,
+                    pending.State,
+                    pending.Extra);
+            }
+            catch
+            {
+                // Ignore world teardown races when stopping the tool during scene/game exit.
+            }
         }
 
         private static string DescribeRecord(BatchTaskRecord record)
@@ -2246,13 +2420,15 @@ namespace MarqueeDelete
             s_TierUiAccess = 0;
         }
 
+        private const long MaxStatusLogBytes = 512 * 1024;
+
         internal static void AppendStatusLine(string entry)
         {
             string line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {entry}";
 
-            // Primary path: %LOCALAPPDATA%Low/Colossal Order/Cities Skylines II/Mods/MarqueeDelete/status.log
-            // Secondary fallback: Application.persistentDataPath/Mods/MarqueeDelete/status.log
-            // Tertiary fallback: ./status.log
+            // Primary path: %LOCALAPPDATA%Low/Colossal Order/Cities Skylines II/Logs/MarqueeDelete.status.log
+            // Secondary fallback: Application.persistentDataPath/Logs/MarqueeDelete.status.log
+            // Tertiary fallback: ./MarqueeDelete.status.log
             string[] candidatePaths = GetLogCandidatePaths();
             foreach (string path in candidatePaths)
             {
@@ -2264,6 +2440,19 @@ namespace MarqueeDelete
                     if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
                     {
                         System.IO.Directory.CreateDirectory(dir);
+                    }
+                    if (System.IO.File.Exists(full))
+                    {
+                        var info = new System.IO.FileInfo(full);
+                        if (info.Length >= MaxStatusLogBytes)
+                        {
+                            string backup = full + ".old";
+                            if (System.IO.File.Exists(backup))
+                            {
+                                System.IO.File.Delete(backup);
+                            }
+                            System.IO.File.Move(full, backup);
+                        }
                     }
                     System.IO.File.AppendAllText(full, line + Environment.NewLine);
                     // Fixed write to primary path, return immediately on success
@@ -2284,7 +2473,7 @@ namespace MarqueeDelete
                 string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 if (!string.IsNullOrEmpty(localAppData))
                 {
-                    list.Add(System.IO.Path.Combine(localAppData + "Low", "Colossal Order", "Cities Skylines II", "Mods", "MarqueeDelete", "status.log"));
+                    list.Add(System.IO.Path.Combine(localAppData + "Low", "Colossal Order", "Cities Skylines II", "Logs", "MarqueeDelete.status.log"));
                 }
             }
             catch {}
@@ -2292,11 +2481,11 @@ namespace MarqueeDelete
             {
                 if (!string.IsNullOrEmpty(Application.persistentDataPath))
                 {
-                    list.Add(System.IO.Path.Combine(Application.persistentDataPath, "Mods", "MarqueeDelete", "status.log"));
+                    list.Add(System.IO.Path.Combine(Application.persistentDataPath, "Logs", "MarqueeDelete.status.log"));
                 }
             }
             catch {}
-            list.Add("status.log");
+            list.Add("MarqueeDelete.status.log");
             return list.ToArray();
         }
 
@@ -2313,7 +2502,7 @@ namespace MarqueeDelete
 
         public bool RequestUndo()
         {
-            if (m_Dragging || HasQueuedDeletion)
+            if (m_Dragging || HasQueuedDeletion || IsEditingRoadFacilities)
             {
                 return false;
             }
@@ -2369,14 +2558,45 @@ namespace MarqueeDelete
 
         public void TickUndo(ToolOutputBarrier barrier)
         {
-            if (barrier == null || !m_UndoManager.IsInProgress)
+            if (barrier == null)
             {
                 return;
             }
 
             if (!Mod.RuntimeActive)
             {
-                m_UndoManager.ClearHistory();
+                m_UndoRefreshDelayFrames = 0;
+                m_UndoRefreshBuildingPositions.Clear();
+                m_UndoRefreshNetPositions.Clear();
+                m_UndoDiagDelayFrames = 0;
+                m_UndoDiagBuildingPositions.Clear();
+                if (m_UndoManager.IsInProgress)
+                {
+                    m_UndoManager.ClearHistory();
+                }
+                return;
+            }
+
+            if (m_UndoRefreshDelayFrames > 0)
+            {
+                m_UndoRefreshDelayFrames--;
+                if (m_UndoRefreshDelayFrames == 0)
+                {
+                    FlushUndoConnectionRefresh(barrier);
+                }
+            }
+
+            if (m_UndoDiagDelayFrames > 0)
+            {
+                m_UndoDiagDelayFrames--;
+                if (m_UndoDiagDelayFrames == 0)
+                {
+                    LogUndoRefreshDiagnostics();
+                }
+            }
+
+            if (!m_UndoManager.IsInProgress)
+            {
                 return;
             }
 
@@ -2387,18 +2607,719 @@ namespace MarqueeDelete
             }
 
             m_UndoManager.Step(EntityManager, barrier.CreateCommandBuffer(), out bool completed);
-            if (completed) PlayUiSound(selectEntity: true);
+            if (completed)
+            {
+                PlayUiSound(selectEntity: true);
+                if (m_UndoManager.TryConsumeConnectionRefresh(m_UndoRefreshBuildingPositions, m_UndoRefreshNetPositions))
+                {
+                    m_UndoRefreshDelayFrames = 4;
+                }
+            }
+        }
+
+        private struct EntityBoundsEntry
+        {
+            public Entity Entity;
+            public Bounds3 Bounds;
+        }
+
+        private struct AabbBoundsCollectIterator : INativeQuadTreeIterator<Entity, QuadTreeBoundsXZ>
+        {
+            public float MinX, MaxX, MinZ, MaxZ;
+            public List<EntityBoundsEntry> Results;
+
+            public bool Intersect(QuadTreeBoundsXZ bounds)
+            {
+                return bounds.m_Bounds.max.x >= MinX && bounds.m_Bounds.min.x <= MaxX &&
+                       bounds.m_Bounds.max.z >= MinZ && bounds.m_Bounds.min.z <= MaxZ;
+            }
+
+            public void Iterate(QuadTreeBoundsXZ bounds, Entity item)
+            {
+                if (Intersect(bounds))
+                {
+                    Results.Add(new EntityBoundsEntry { Entity = item, Bounds = bounds.m_Bounds });
+                }
+            }
+        }
+
+        private struct RestoredRoadCurve
+        {
+            public Bezier4x3 Curve;
+            public Bounds3 Bounds;
+        }
+
+        private struct AabbEntityCollectIterator : INativeQuadTreeIterator<Entity, QuadTreeBoundsXZ>
+        {
+            public float MinX, MaxX, MinZ, MaxZ;
+            public List<Entity> Results;
+
+            public bool Intersect(QuadTreeBoundsXZ bounds)
+            {
+                return bounds.m_Bounds.max.x >= MinX && bounds.m_Bounds.min.x <= MaxX &&
+                       bounds.m_Bounds.max.z >= MinZ && bounds.m_Bounds.min.z <= MaxZ;
+            }
+
+            public void Iterate(QuadTreeBoundsXZ bounds, Entity item)
+            {
+                if (Intersect(bounds))
+                {
+                    Results.Add(item);
+                }
+            }
+        }
+
+        private static long RefreshCellKey(float x, float z, float cellSize)
+        {
+            int cx = (int)math.floor(x / cellSize);
+            int cz = (int)math.floor(z / cellSize);
+            return ((long)cx << 32) ^ (uint)cz;
+        }
+
+        private static long RefreshCellKeyInt(int cx, int cz) => ((long)cx << 32) ^ (uint)cz;
+
+        private void MarkEntityUpdated(EntityCommandBuffer ecb, HashSet<Entity> marked, Entity entity)
+        {
+            if (entity != Entity.Null &&
+                EntityManager.Exists(entity) &&
+                !EntityManager.HasComponent<Deleted>(entity) &&
+                !EntityManager.HasComponent<Temp>(entity) &&
+                marked.Add(entity))
+            {
+                ecb.AddComponent<Updated>(entity);
+            }
+        }
+
+        private void MarkBuildingGraphUpdated(EntityCommandBuffer ecb, HashSet<Entity> marked, Entity root, bool includeUpgrades, int depth = 0)
+        {
+            MarkEntityUpdated(ecb, marked, root);
+
+            if (EntityManager.HasBuffer<Game.Buildings.SpawnLocationElement>(root))
+            {
+                var spawns = EntityManager.GetBuffer<Game.Buildings.SpawnLocationElement>(root, true);
+                for (int i = 0; i < spawns.Length; i++)
+                {
+                    MarkEntityUpdated(ecb, marked, spawns[i].m_SpawnLocation);
+                }
+            }
+
+            if (EntityManager.HasBuffer<Game.Net.SubNet>(root))
+            {
+                var subNets = EntityManager.GetBuffer<Game.Net.SubNet>(root, true);
+                for (int i = 0; i < subNets.Length; i++)
+                {
+                    Entity subNet = subNets[i].m_SubNet;
+                    MarkEntityUpdated(ecb, marked, subNet);
+                    if (subNet != Entity.Null && EntityManager.Exists(subNet) &&
+                        !EntityManager.HasComponent<Deleted>(subNet) &&
+                        EntityManager.HasComponent<Edge>(subNet))
+                    {
+                        Edge subEdge = EntityManager.GetComponentData<Edge>(subNet);
+                        MarkEntityUpdated(ecb, marked, subEdge.m_Start);
+                        MarkEntityUpdated(ecb, marked, subEdge.m_End);
+                    }
+                }
+            }
+
+            if (EntityManager.HasBuffer<Game.Areas.SubArea>(root))
+            {
+                var subAreas = EntityManager.GetBuffer<Game.Areas.SubArea>(root, true);
+                for (int i = 0; i < subAreas.Length; i++)
+                {
+                    MarkEntityUpdated(ecb, marked, subAreas[i].m_Area);
+                }
+            }
+
+            if (depth < 2 && EntityManager.HasBuffer<Game.Objects.SubObject>(root))
+            {
+                var subObjs = EntityManager.GetBuffer<Game.Objects.SubObject>(root, true);
+                for (int i = 0; i < subObjs.Length; i++)
+                {
+                    Entity subObj = subObjs[i].m_SubObject;
+                    if (subObj == Entity.Null || !EntityManager.Exists(subObj) ||
+                        EntityManager.HasComponent<Deleted>(subObj) ||
+                        EntityManager.HasComponent<Temp>(subObj) ||
+                        EntityManager.HasComponent<Game.Buildings.Building>(subObj))
+                    {
+                        continue;
+                    }
+                    MarkBuildingGraphUpdated(ecb, marked, subObj, includeUpgrades: false, depth: depth + 1);
+                }
+            }
+
+            if (includeUpgrades && EntityManager.HasBuffer<Game.Buildings.InstalledUpgrade>(root))
+            {
+                var upgrades = EntityManager.GetBuffer<Game.Buildings.InstalledUpgrade>(root, true);
+                for (int i = 0; i < upgrades.Length; i++)
+                {
+                    Entity upg = upgrades[i].m_Upgrade;
+                    if (upg != Entity.Null && EntityManager.Exists(upg) && !EntityManager.HasComponent<Deleted>(upg))
+                    {
+                        MarkBuildingGraphUpdated(ecb, marked, upg, includeUpgrades: false, depth: depth + 1);
+                    }
+                }
+            }
+        }
+
+        private void MarkConnectedBoundaryEdges(EntityCommandBuffer ecb, HashSet<Entity> marked, Entity node)
+        {
+            if (node == Entity.Null || !EntityManager.Exists(node) ||
+                EntityManager.HasComponent<Deleted>(node) ||
+                !EntityManager.HasBuffer<ConnectedEdge>(node))
+            {
+                return;
+            }
+
+            var connected = EntityManager.GetBuffer<ConnectedEdge>(node, true);
+            for (int i = 0; i < connected.Length; i++)
+            {
+                Entity adj = connected[i].m_Edge;
+                if (adj == Entity.Null || !EntityManager.Exists(adj) ||
+                    EntityManager.HasComponent<Deleted>(adj) ||
+                    EntityManager.HasComponent<Temp>(adj) ||
+                    EntityManager.HasComponent<Owner>(adj))
+                {
+                    continue;
+                }
+                MarkEntityUpdated(ecb, marked, adj);
+            }
+        }
+
+        private void FlushUndoConnectionRefresh(ToolOutputBarrier barrier = null)
+        {
+            if (m_UndoRefreshBuildingPositions.Count == 0 && m_UndoRefreshNetPositions.Count == 0)
+            {
+                return;
+            }
+
+            barrier ??= m_DeletionBarrier ?? World.GetExistingSystemManaged<ToolOutputBarrier>();
+            if (barrier == null)
+            {
+                m_UndoRefreshBuildingPositions.Clear();
+                m_UndoRefreshNetPositions.Clear();
+                return;
+            }
+
+            // Compute tight world AABB around restored positions and bucket targets spatially so
+            // refresh runs in O(log N + K) over the undone block instead of scanning the entire city.
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minZ = float.MaxValue, maxZ = float.MinValue;
+            const float bldCellSize = 32f;
+            var bldGrid = new Dictionary<long, List<float3>>();
+            for (int i = 0; i < m_UndoRefreshBuildingPositions.Count; i++)
+            {
+                float3 p = m_UndoRefreshBuildingPositions[i];
+                if (p.x < minX) minX = p.x;
+                if (p.x > maxX) maxX = p.x;
+                if (p.z < minZ) minZ = p.z;
+                if (p.z > maxZ) maxZ = p.z;
+                long key = RefreshCellKey(p.x, p.z, bldCellSize);
+                if (!bldGrid.TryGetValue(key, out var bucket)) bldGrid[key] = bucket = new List<float3>(4);
+                bucket.Add(p);
+            }
+
+            const float netCellSize = 16f;
+            var netGrid = new Dictionary<long, List<float3>>();
+            for (int i = 0; i < m_UndoRefreshNetPositions.Count; i++)
+            {
+                float3 p = m_UndoRefreshNetPositions[i];
+                if (p.x < minX) minX = p.x;
+                if (p.x > maxX) maxX = p.x;
+                if (p.z < minZ) minZ = p.z;
+                if (p.z > maxZ) maxZ = p.z;
+                long key = RefreshCellKey(p.x, p.z, netCellSize);
+                if (!netGrid.TryGetValue(key, out var bucket)) netGrid[key] = bucket = new List<float3>(4);
+                bucket.Add(p);
+            }
+
+            EntityCommandBuffer ecb = barrier.CreateCommandBuffer();
+            var marked = new HashSet<Entity>(128);
+            var netCandidates = new List<Entity>(128);
+            var restoredRoadCurves = new List<RestoredRoadCurve>(Math.Max(16, m_UndoRefreshNetPositions.Count));
+            const float roadCurveCellSize = 64f;
+            var roadCurveGrid = new Dictionary<long, List<int>>();
+            float objMinX = minX, objMaxX = maxX, objMinZ = minZ, objMaxZ = maxZ;
+
+            // Stage 1: Resolve live restored road edges + roads adjacent to restored buildings first,
+            // collecting the exact live Bezier curves/bounds of every restored road so Stage 2 can
+            // reconnect surviving roadside buildings that were NOT deleted along with the road.
+            var netSearch = World.GetExistingSystemManaged<Game.Net.SearchSystem>();
+            if (netSearch != null)
+            {
+                var tree = netSearch.GetNetSearchTree(true, out JobHandle deps);
+                deps.Complete();
+                var iter = new AabbEntityCollectIterator
+                {
+                    MinX = minX - 64f,
+                    MaxX = maxX + 64f,
+                    MinZ = minZ - 64f,
+                    MaxZ = maxZ + 64f,
+                    Results = netCandidates,
+                };
+                tree.Iterate(ref iter);
+                netSearch.AddNetSearchTreeReader(default(JobHandle));
+
+                for (int i = 0; i < netCandidates.Count; i++)
+                {
+                    Entity edge = netCandidates[i];
+                    if (!EntityManager.Exists(edge) ||
+                        EntityManager.HasComponent<Deleted>(edge) ||
+                        EntityManager.HasComponent<Temp>(edge) ||
+                        !EntityManager.HasComponent<Edge>(edge) ||
+                        !EntityManager.HasComponent<Curve>(edge))
+                    {
+                        continue;
+                    }
+
+                    Bezier4x3 c = EntityManager.GetComponentData<Curve>(edge).m_Bezier;
+                    float3 mid = 0.125f * c.a + 0.375f * c.b + 0.375f * c.c + 0.125f * c.d;
+                    bool matchedRestoredNet = false;
+                    bool matchedNearBuilding = false;
+
+                    if (netGrid.Count > 0)
+                    {
+                        int ncx = (int)math.floor(mid.x / netCellSize);
+                        int ncz = (int)math.floor(mid.z / netCellSize);
+                        for (int dx = -1; dx <= 1 && !matchedRestoredNet; dx++)
+                        {
+                            for (int dz = -1; dz <= 1 && !matchedRestoredNet; dz++)
+                            {
+                                if (!netGrid.TryGetValue(RefreshCellKeyInt(ncx + dx, ncz + dz), out var bucket)) continue;
+                                for (int j = 0; j < bucket.Count; j++)
+                                {
+                                    if (math.distancesq(mid, bucket[j]) <= 9.0f)
+                                    {
+                                        matchedRestoredNet = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!matchedRestoredNet && bldGrid.Count > 0)
+                    {
+                        int bcx = (int)math.floor(mid.x / bldCellSize);
+                        int bcz = (int)math.floor(mid.z / bldCellSize);
+                        for (int dx = -1; dx <= 1 && !matchedNearBuilding; dx++)
+                        {
+                            for (int dz = -1; dz <= 1 && !matchedNearBuilding; dz++)
+                            {
+                                if (!bldGrid.TryGetValue(RefreshCellKeyInt(bcx + dx, bcz + dz), out var bucket)) continue;
+                                for (int j = 0; j < bucket.Count; j++)
+                                {
+                                    float3 target = bucket[j];
+                                    if (math.distancesq(mid, target) <= 1024f ||
+                                        math.distancesq(c.a, target) <= 1024f ||
+                                        math.distancesq(c.d, target) <= 1024f)
+                                    {
+                                        matchedNearBuilding = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (matchedRestoredNet || matchedNearBuilding)
+                    {
+                        MarkEntityUpdated(ecb, marked, edge);
+                        Edge edgeComp = EntityManager.GetComponentData<Edge>(edge);
+                        MarkEntityUpdated(ecb, marked, edgeComp.m_Start);
+                        MarkEntityUpdated(ecb, marked, edgeComp.m_End);
+                        if (matchedRestoredNet)
+                        {
+                            MarkConnectedBoundaryEdges(ecb, marked, edgeComp.m_Start);
+                            MarkConnectedBoundaryEdges(ecb, marked, edgeComp.m_End);
+
+                            Bounds3 roadBounds = MathUtils.Bounds(c);
+                            int curveIdx = restoredRoadCurves.Count;
+                            restoredRoadCurves.Add(new RestoredRoadCurve { Curve = c, Bounds = roadBounds });
+                            if (roadBounds.min.x < objMinX) objMinX = roadBounds.min.x;
+                            if (roadBounds.max.x > objMaxX) objMaxX = roadBounds.max.x;
+                            if (roadBounds.min.z < objMinZ) objMinZ = roadBounds.min.z;
+                            if (roadBounds.max.z > objMaxZ) objMaxZ = roadBounds.max.z;
+
+                            int rMinX = (int)math.floor((roadBounds.min.x - UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
+                            int rMaxX = (int)math.floor((roadBounds.max.x + UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
+                            int rMinZ = (int)math.floor((roadBounds.min.z - UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
+                            int rMaxZ = (int)math.floor((roadBounds.max.z + UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
+                            for (int rx = rMinX; rx <= rMaxX; rx++)
+                            {
+                                for (int rz = rMinZ; rz <= rMaxZ; rz++)
+                                {
+                                    long rKey = RefreshCellKeyInt(rx, rz);
+                                    if (!roadCurveGrid.TryGetValue(rKey, out var rBucket)) roadCurveGrid[rKey] = rBucket = new List<int>(4);
+                                    rBucket.Add(curveIdx);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Stage 2: Refresh ALL restored buildings AND all surviving buildings/SubNet hosts adjacent
+            // to restored roads so RoadConnectionSystem, GenerateEdgesSystem (LocalConnect),
+            // ReferencesSystem, LaneConnectionSystem, SpawnLocationConnectionSystem, and
+            // ConnectionWarningSystem reconnect them in the same Modification cycle.
+            m_UndoDiagBuildingPositions.Clear();
+            m_UndoDiagRestoredCount = 0;
+            m_UndoDiagNeighborCount = 0;
+
+            if (m_UndoRefreshBuildingPositions.Count > 0 || restoredRoadCurves.Count > 0)
+            {
+                var objSearch = World.GetExistingSystemManaged<Game.Objects.SearchSystem>();
+                if (objSearch != null)
+                {
+                    var objCandidates = new List<EntityBoundsEntry>(128);
+                    float objPad = restoredRoadCurves.Count > 0 ? UndoRefreshLogic.RoadNeighborCenterRadius : 4f;
+                    var tree = objSearch.GetStaticSearchTree(true, out JobHandle deps);
+                    deps.Complete();
+                    var iter = new AabbBoundsCollectIterator
+                    {
+                        MinX = objMinX - objPad,
+                        MaxX = objMaxX + objPad,
+                        MinZ = objMinZ - objPad,
+                        MaxZ = objMaxZ + objPad,
+                        Results = objCandidates,
+                    };
+                    tree.Iterate(ref iter);
+                    objSearch.AddStaticSearchTreeReader(default(JobHandle));
+
+                    var testedRoadIndices = new HashSet<int>();
+                    for (int i = 0; i < objCandidates.Count; i++)
+                    {
+                        EntityBoundsEntry entry = objCandidates[i];
+                        Entity entity = entry.Entity;
+                        if (!EntityManager.Exists(entity) ||
+                            EntityManager.HasComponent<Deleted>(entity) ||
+                            EntityManager.HasComponent<Temp>(entity) ||
+                            !EntityManager.HasComponent<Game.Objects.Transform>(entity))
+                        {
+                            continue;
+                        }
+
+                        bool isBuilding = EntityManager.HasComponent<Game.Buildings.Building>(entity);
+                        bool isRootHost = !EntityManager.HasComponent<Owner>(entity) &&
+                                          (EntityManager.HasBuffer<Game.Net.SubNet>(entity) ||
+                                           EntityManager.HasComponent<Game.Objects.SpawnLocation>(entity));
+                        if (!isBuilding && !isRootHost)
+                        {
+                            continue;
+                        }
+
+                        float3 pos = EntityManager.GetComponentData<Game.Objects.Transform>(entity).m_Position;
+                        bool matchedRestored = false;
+                        if (isBuilding && bldGrid.Count > 0)
+                        {
+                            int cx = (int)math.floor(pos.x / bldCellSize);
+                            int cz = (int)math.floor(pos.z / bldCellSize);
+                            for (int dx = -1; dx <= 1 && !matchedRestored; dx++)
+                            {
+                                for (int dz = -1; dz <= 1 && !matchedRestored; dz++)
+                                {
+                                    if (!bldGrid.TryGetValue(RefreshCellKeyInt(cx + dx, cz + dz), out var bucket)) continue;
+                                    for (int j = 0; j < bucket.Count; j++)
+                                    {
+                                        float3 target = bucket[j];
+                                        float ddx = pos.x - target.x;
+                                        float ddz = pos.z - target.z;
+                                        if (ddx * ddx + ddz * ddz <= 1.0f)
+                                        {
+                                            matchedRestored = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        bool matchedRoadNeighbor = false;
+                        if (!matchedRestored && restoredRoadCurves.Count > 0)
+                        {
+                            bool hasNoRoadEdge = isBuilding && EntityManager.GetComponentData<Game.Buildings.Building>(entity).m_RoadEdge == Entity.Null;
+                            int rcx = (int)math.floor(pos.x / roadCurveCellSize);
+                            int rcz = (int)math.floor(pos.z / roadCurveCellSize);
+                            int bMinX = (int)math.floor(entry.Bounds.min.x / roadCurveCellSize);
+                            int bMaxX = (int)math.floor(entry.Bounds.max.x / roadCurveCellSize);
+                            int bMinZ = (int)math.floor(entry.Bounds.min.z / roadCurveCellSize);
+                            int bMaxZ = (int)math.floor(entry.Bounds.max.z / roadCurveCellSize);
+                            int cellMinX = Math.Min(rcx, bMinX);
+                            int cellMaxX = Math.Max(rcx, bMaxX);
+                            int cellMinZ = Math.Min(rcz, bMinZ);
+                            int cellMaxZ = Math.Max(rcz, bMaxZ);
+
+                            testedRoadIndices.Clear();
+                            for (int gx = cellMinX; gx <= cellMaxX && !matchedRoadNeighbor; gx++)
+                            {
+                                for (int gz = cellMinZ; gz <= cellMaxZ && !matchedRoadNeighbor; gz++)
+                                {
+                                    if (!roadCurveGrid.TryGetValue(RefreshCellKeyInt(gx, gz), out var rBucket)) continue;
+                                    for (int r = 0; r < rBucket.Count; r++)
+                                    {
+                                        int curveIdx = rBucket[r];
+                                        if (!testedRoadIndices.Add(curveIdx)) continue;
+                                        RestoredRoadCurve rc = restoredRoadCurves[curveIdx];
+                                        if (!UndoRefreshLogic.BoundsOverlapXZ(
+                                                entry.Bounds.min.x, entry.Bounds.max.x, entry.Bounds.min.z, entry.Bounds.max.z,
+                                                rc.Bounds.min.x, rc.Bounds.max.x, rc.Bounds.min.z, rc.Bounds.max.z,
+                                                UndoRefreshLogic.RoadNeighborCenterRadius))
+                                        {
+                                            continue;
+                                        }
+
+                                        float centerDist = MathUtils.Distance(rc.Curve.xz, pos.xz, out float tCenter);
+                                        float3 closestOnRoad = MathUtils.Position(rc.Curve, tCenter);
+                                        float2 clampedBounds = math.clamp(closestOnRoad.xz, entry.Bounds.min.xz, entry.Bounds.max.xz);
+                                        float boundsDist = MathUtils.Distance(rc.Curve.xz, clampedBounds, out _);
+                                        if (UndoRefreshLogic.IsBuildingAdjacentToRoad(centerDist, boundsDist, hasNoRoadEdge))
+                                        {
+                                            matchedRoadNeighbor = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (matchedRestored || matchedRoadNeighbor)
+                        {
+                            MarkBuildingGraphUpdated(ecb, marked, entity, includeUpgrades: true);
+                            if (isBuilding)
+                            {
+                                m_UndoDiagBuildingPositions.Add(pos);
+                                if (matchedRestored) m_UndoDiagRestoredCount++;
+                                else m_UndoDiagNeighborCount++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (m_UndoDiagBuildingPositions.Count > 0)
+            {
+                m_UndoDiagDelayFrames = 4;
+            }
+
+            m_UndoRefreshBuildingPositions.Clear();
+            m_UndoRefreshNetPositions.Clear();
+        }
+
+        private void LogUndoRefreshDiagnostics()
+        {
+            if (m_UndoDiagBuildingPositions.Count == 0) return;
+
+            try
+            {
+                var objSearch = World.GetExistingSystemManaged<Game.Objects.SearchSystem>();
+                if (objSearch == null) return;
+
+                float minX = float.MaxValue, maxX = float.MinValue;
+                float minZ = float.MaxValue, maxZ = float.MinValue;
+                const float cellSize = 32f;
+                var grid = new Dictionary<long, List<float3>>();
+                for (int i = 0; i < m_UndoDiagBuildingPositions.Count; i++)
+                {
+                    float3 p = m_UndoDiagBuildingPositions[i];
+                    if (p.x < minX) minX = p.x;
+                    if (p.x > maxX) maxX = p.x;
+                    if (p.z < minZ) minZ = p.z;
+                    if (p.z > maxZ) maxZ = p.z;
+                    long key = RefreshCellKey(p.x, p.z, cellSize);
+                    if (!grid.TryGetValue(key, out var bucket)) grid[key] = bucket = new List<float3>(4);
+                    bucket.Add(p);
+                }
+
+                Entity carWarnPrefab = Entity.Null;
+                Entity pedWarnPrefab = Entity.Null;
+                Entity roadWarnPrefab = Entity.Null;
+                using (var cfgQ = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<Game.Prefabs.TrafficConfigurationData>()))
+                {
+                    if (!cfgQ.IsEmptyIgnoreFilter)
+                    {
+                        var cfg = cfgQ.GetSingleton<Game.Prefabs.TrafficConfigurationData>();
+                        carWarnPrefab = cfg.m_CarConnectionNotification;
+                        pedWarnPrefab = cfg.m_PedestrianConnectionNotification;
+                        roadWarnPrefab = cfg.m_RoadConnectionNotification;
+                    }
+                }
+
+                var candidates = new List<Entity>(128);
+                var tree = objSearch.GetStaticSearchTree(true, out JobHandle deps);
+                deps.Complete();
+                var iter = new AabbEntityCollectIterator
+                {
+                    MinX = minX - 4f,
+                    MaxX = maxX + 4f,
+                    MinZ = minZ - 4f,
+                    MaxZ = maxZ + 4f,
+                    Results = candidates,
+                };
+                tree.Iterate(ref iter);
+                objSearch.AddStaticSearchTreeReader(default(JobHandle));
+
+                int matchedBuildings = 0;
+                int noRoadEdge = 0;
+                int unlinkedSpawns = 0;
+                int carWarns = 0;
+                int pedWarns = 0;
+                int roadWarns = 0;
+
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    Entity entity = candidates[i];
+                    if (!EntityManager.Exists(entity) ||
+                        EntityManager.HasComponent<Deleted>(entity) ||
+                        EntityManager.HasComponent<Temp>(entity) ||
+                        !EntityManager.HasComponent<Game.Buildings.Building>(entity) ||
+                        !EntityManager.HasComponent<Game.Objects.Transform>(entity))
+                    {
+                        continue;
+                    }
+
+                    float3 pos = EntityManager.GetComponentData<Game.Objects.Transform>(entity).m_Position;
+                    int cx = (int)math.floor(pos.x / cellSize);
+                    int cz = (int)math.floor(pos.z / cellSize);
+                    bool matched = false;
+                    for (int dx = -1; dx <= 1 && !matched; dx++)
+                    {
+                        for (int dz = -1; dz <= 1 && !matched; dz++)
+                        {
+                            if (!grid.TryGetValue(RefreshCellKeyInt(cx + dx, cz + dz), out var bucket)) continue;
+                            for (int j = 0; j < bucket.Count; j++)
+                            {
+                                float3 t = bucket[j];
+                                float ddx = pos.x - t.x;
+                                float ddz = pos.z - t.z;
+                                if (ddx * ddx + ddz * ddz <= 1.0f) { matched = true; break; }
+                            }
+                        }
+                    }
+                    if (!matched) continue;
+
+                    matchedBuildings++;
+                    if (EntityManager.GetComponentData<Game.Buildings.Building>(entity).m_RoadEdge == Entity.Null)
+                    {
+                        noRoadEdge++;
+                    }
+                    if (EntityManager.HasBuffer<Game.Buildings.SpawnLocationElement>(entity))
+                    {
+                        var spawns = EntityManager.GetBuffer<Game.Buildings.SpawnLocationElement>(entity, true);
+                        for (int s = 0; s < spawns.Length; s++)
+                        {
+                            Entity sl = spawns[s].m_SpawnLocation;
+                            if (sl != Entity.Null && EntityManager.Exists(sl) &&
+                                EntityManager.HasComponent<Game.Objects.SpawnLocation>(sl) &&
+                                EntityManager.GetComponentData<Game.Objects.SpawnLocation>(sl).m_ConnectedLane1 == Entity.Null)
+                            {
+                                unlinkedSpawns++;
+                            }
+                        }
+                    }
+                    CountConnectionIcons(entity, carWarnPrefab, pedWarnPrefab, roadWarnPrefab, ref carWarns, ref pedWarns, ref roadWarns);
+                }
+
+                AppendStatusLine(
+                    $"[State: undo-refresh-check, Buildings: {matchedBuildings}, RestoredBld: {m_UndoDiagRestoredCount}, NeighborBld: {m_UndoDiagNeighborCount}, " +
+                    $"NoRoadEdge: {noRoadEdge}, UnlinkedSpawns: {unlinkedSpawns}, CarWarn: {carWarns}, PedWarn: {pedWarns}, RoadWarn: {roadWarns}]");
+            }
+            catch (Exception ex)
+            {
+                AppendStatusLine($"[State: undo-refresh-check-error, Message: {ex.Message}]");
+            }
+            finally
+            {
+                m_UndoDiagBuildingPositions.Clear();
+            }
+        }
+
+        private void CountConnectionIcons(
+            Entity root,
+            Entity carWarnPrefab,
+            Entity pedWarnPrefab,
+            Entity roadWarnPrefab,
+            ref int carWarns,
+            ref int pedWarns,
+            ref int roadWarns)
+        {
+            if (EntityManager.HasBuffer<Game.Notifications.IconElement>(root))
+            {
+                var icons = EntityManager.GetBuffer<Game.Notifications.IconElement>(root, true);
+                for (int i = 0; i < icons.Length; i++)
+                {
+                    Entity icon = icons[i].m_Icon;
+                    if (icon == Entity.Null || !EntityManager.Exists(icon) || !EntityManager.HasComponent<PrefabRef>(icon)) continue;
+                    Entity p = EntityManager.GetComponentData<PrefabRef>(icon).m_Prefab;
+                    if (p == carWarnPrefab) carWarns++;
+                    else if (p == pedWarnPrefab) pedWarns++;
+                    else if (p == roadWarnPrefab) roadWarns++;
+                }
+            }
+            if (EntityManager.HasBuffer<Game.Net.SubNet>(root))
+            {
+                var subNets = EntityManager.GetBuffer<Game.Net.SubNet>(root, true);
+                for (int i = 0; i < subNets.Length; i++)
+                {
+                    Entity sn = subNets[i].m_SubNet;
+                    if (sn == Entity.Null || !EntityManager.Exists(sn) || !EntityManager.HasBuffer<Game.Notifications.IconElement>(sn)) continue;
+                    var icons = EntityManager.GetBuffer<Game.Notifications.IconElement>(sn, true);
+                    for (int k = 0; k < icons.Length; k++)
+                    {
+                        Entity icon = icons[k].m_Icon;
+                        if (icon == Entity.Null || !EntityManager.Exists(icon) || !EntityManager.HasComponent<PrefabRef>(icon)) continue;
+                        Entity p = EntityManager.GetComponentData<PrefabRef>(icon).m_Prefab;
+                        if (p == carWarnPrefab) carWarns++;
+                        else if (p == pedWarnPrefab) pedWarns++;
+                        else if (p == roadWarnPrefab) roadWarns++;
+                    }
+                }
+            }
+        }
+
+        private Camera ResolveActiveCamera()
+        {
+            if (m_CameraUpdateSystem != null && m_CameraUpdateSystem.activeCamera != null)
+            {
+                return m_CameraUpdateSystem.activeCamera;
+            }
+            return Camera.main;
+        }
+
+        private static bool HasCameraMovedSignificantly(Camera cam, ref float3 lastPos, ref float3 lastFwd, ref bool hasLast)
+        {
+            if (cam == null) return false;
+            float3 pos = cam.transform.position;
+            float3 fwd = cam.transform.forward;
+            if (!hasLast)
+            {
+                lastPos = pos;
+                lastFwd = fwd;
+                hasLast = true;
+                return true;
+            }
+
+            if (math.distancesq(pos, lastPos) > 0.0625f || math.dot(fwd, lastFwd) < 0.9995f)
+            {
+                lastPos = pos;
+                lastFwd = fwd;
+                return true;
+            }
+
+            return false;
         }
 
         private MarqueeShapeXZ BuildRectShape(float3 startWorld, float3 endWorld)
         {
             bool cameraAligned = Mod.Settings != null && Mod.Settings.CameraAlignedMarquee;
             CoordXZ camFwd = new CoordXZ(0f, 1f);
-            Camera cam = Camera.main;
+            Camera cam = ResolveActiveCamera();
             if (cam != null)
             {
-                Vector3 fwd = cam.transform.forward;
-                camFwd = new CoordXZ(fwd.x, fwd.z);
+                UnityEngine.Transform tr = cam.transform;
+                Vector3 right = tr.right;
+                Vector3 fwd = tr.forward;
+                Vector3 up = tr.up;
+                camFwd = MarqueeShapeXZ.ResolveCameraForwardXZ(right.x, right.z, fwd.x, fwd.z, up.x, up.z);
             }
 
             return MarqueeShapeXZ.FromPoints(
@@ -2426,7 +3347,7 @@ namespace MarqueeDelete
                 return fallbackWorld;
             }
 
-            Camera cam = Camera.main;
+            Camera cam = ResolveActiveCamera();
             if (cam == null)
             {
                 return fallbackWorld;
@@ -2530,7 +3451,7 @@ namespace MarqueeDelete
 
         private void HandleSingleClickAdd(Entity pickedEntity)
         {
-            if (Mod.Settings == null || HasActiveUndo || m_ImportantModalOpen ||
+            if (IsEditingRoadFacilities || Mod.Settings == null || HasActiveUndo || m_ImportantModalOpen ||
                 IsReviewingInterruptedDeletion || pickedEntity == Entity.Null)
             {
                 return;
@@ -2558,7 +3479,7 @@ namespace MarqueeDelete
 
         private void HandleSingleClickRemove(Entity pickedEntity)
         {
-            if (HasActiveUndo || m_ImportantModalOpen || !HasPending ||
+            if (IsEditingRoadFacilities || HasActiveUndo || m_ImportantModalOpen || !HasPending ||
                 IsReviewingInterruptedDeletion || pickedEntity == Entity.Null)
             {
                 return;
@@ -2592,7 +3513,7 @@ namespace MarqueeDelete
                 }
             }
 
-            Camera cam = Camera.main;
+            Camera cam = ResolveActiveCamera();
             Mouse mouse = Mouse.current;
             if (cam != null && mouse != null)
             {
@@ -2645,6 +3566,17 @@ namespace MarqueeDelete
                 }
             }
 
+            if (m_ToRemoveHighlights.Count == 0 && m_DesiredHighlights.Count == 0)
+            {
+                return;
+            }
+
+            // ToolOutputBarrier.CreateCommandBuffer() throws outside ToolSystem update phase
+            // (e.g. OnGamePreload / UI triggers), so only batch via ECB during OnUpdate.
+            bool useEcb = m_InToolUpdate && m_DeletionBarrier != null && World != null && World.IsCreated;
+            bool hasEcb = false;
+            EntityCommandBuffer ecb = default(EntityCommandBuffer);
+
             for (int i = 0; i < m_ToRemoveHighlights.Count; i++)
             {
                 Entity e = m_ToRemoveHighlights[i];
@@ -2653,11 +3585,21 @@ namespace MarqueeDelete
                 {
                     if (EntityManager.HasComponent<Highlighted>(e))
                     {
-                        EntityManager.RemoveComponent<Highlighted>(e);
+                        if (useEcb)
+                        {
+                            if (!hasEcb) { ecb = m_DeletionBarrier.CreateCommandBuffer(); hasEcb = true; }
+                            ecb.RemoveComponent<Highlighted>(e);
+                        }
+                        else EntityManager.RemoveComponent<Highlighted>(e);
                     }
                     if (!EntityManager.HasComponent<Deleted>(e) && !EntityManager.HasComponent<BatchesUpdated>(e))
                     {
-                        EntityManager.AddComponent<BatchesUpdated>(e);
+                        if (useEcb)
+                        {
+                            if (!hasEcb) { ecb = m_DeletionBarrier.CreateCommandBuffer(); hasEcb = true; }
+                            ecb.AddComponent<BatchesUpdated>(e);
+                        }
+                        else EntityManager.AddComponent<BatchesUpdated>(e);
                     }
                 }
             }
@@ -2668,12 +3610,22 @@ namespace MarqueeDelete
                 {
                     if (!EntityManager.HasComponent<Highlighted>(next))
                     {
-                        EntityManager.AddComponent<Highlighted>(next);
+                        if (useEcb)
+                        {
+                            if (!hasEcb) { ecb = m_DeletionBarrier.CreateCommandBuffer(); hasEcb = true; }
+                            ecb.AddComponent<Highlighted>(next);
+                        }
+                        else EntityManager.AddComponent<Highlighted>(next);
                         m_OwnedHighlights.Add(next);
                     }
                     if (!EntityManager.HasComponent<BatchesUpdated>(next))
                     {
-                        EntityManager.AddComponent<BatchesUpdated>(next);
+                        if (useEcb)
+                        {
+                            if (!hasEcb) { ecb = m_DeletionBarrier.CreateCommandBuffer(); hasEcb = true; }
+                            ecb.AddComponent<BatchesUpdated>(next);
+                        }
+                        else EntityManager.AddComponent<BatchesUpdated>(next);
                     }
                 }
             }
@@ -2900,6 +3852,7 @@ namespace MarqueeDelete
 
                 DrawBuildingOverlays(ref buffer, CurrentResult, pulse, in colors);
                 DrawAssetOverlays(ref buffer, in colors);
+                DrawRoadFacilityMarkers(ref buffer, CurrentResult, in colors);
             }
             finally
             {
