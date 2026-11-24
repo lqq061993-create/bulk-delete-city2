@@ -14,6 +14,7 @@ import {
     AlphaKey,
     COLOR_GROUPS,
     ColorKey,
+    findMatchingPreset,
     hexToRgb,
     PRESET_THEMES,
     QUICK_SWATCHES,
@@ -50,7 +51,7 @@ function onPrimaryMouseDown(e: React.MouseEvent, action: () => void): void {
 }
 
 /**
- * Pure pointer-tracked <div> slider (zero <input> tags so Cohtml never acquires
+ * Pure pointer-tracked <div> slider (zero HTML input tags so Cohtml never acquires
  * text-input focus or leaks WASD/A-F keys to the camera).
  */
 function DivSlider(props: DivSliderProps): JSX.Element {
@@ -190,11 +191,18 @@ function positionCard(
     card.style.right = "auto";
 }
 
+function hexWithAlphaCss(hex: string, alpha: number): string {
+    const { r, g, b } = hexToRgb(hex);
+    const a = Math.max(0.08, Math.min(1, alpha));
+    return `rgba(${r}, ${g}, ${b}, ${a.toFixed(2)})`;
+}
+
 export function ColorPaletteModal(props: {
     t: (id: string, fallback: string) => string;
 }): JSX.Element {
     const { t } = props;
     const palette = useColorPalette();
+    const [activeGroupId, setActiveGroupId] = useState<string>(COLOR_GROUPS[0].id);
     const [selectedKey, setSelectedKey] = useState<ColorKey>("marqueeGroundBorder");
     const [isHeaderDragging, setIsHeaderDragging] = useState(false);
     const cardRef = useRef<HTMLDivElement | null>(null);
@@ -294,6 +302,8 @@ export function ColorPaletteModal(props: {
         positionCard(card, rect.left, rect.top, rect.width, rect.height);
     };
 
+    const activePresetId = findMatchingPreset(palette);
+    const activeGroup = COLOR_GROUPS.find((g) => g.id === activeGroupId) ?? COLOR_GROUPS[0];
     const activeHex = palette[selectedKey];
     const rgb = hexToRgb(activeHex);
 
@@ -309,6 +319,14 @@ export function ColorPaletteModal(props: {
         }
     }
 
+    const handleSelectGroup = (groupId: string) => {
+        setActiveGroupId(groupId);
+        const groupSpec = COLOR_GROUPS.find((g) => g.id === groupId);
+        if (groupSpec && groupSpec.items.length > 0 && !groupSpec.items.some((item) => item.key === selectedKey)) {
+            setSelectedKey(groupSpec.items[0].key);
+        }
+    };
+
     const emitRgbChannel = (channel: "r" | "g" | "b", nextVal: number) => {
         const clamped = Math.max(0, Math.min(255, Math.round(nextVal)));
         const r = channel === "r" ? clamped : rgb.r;
@@ -321,6 +339,14 @@ export function ColorPaletteModal(props: {
         const pct = Math.max(0, Math.min(100, Math.round(nextRatio * 100)));
         setAlpha(key, pct / 100);
     };
+
+    const zonePreviewColors = [
+        palette.buildingResidential,
+        palette.buildingCommercial,
+        palette.buildingIndustrial,
+        palette.buildingOffice,
+        palette.buildingService,
+    ];
 
     const modalNode = (
         <div
@@ -350,72 +376,122 @@ export function ColorPaletteModal(props: {
             </div>
 
             <div className={styles.colorScrollBody}>
+                {/* Compact Live Mini Preview Strip */}
+                <div className={styles.colorPreviewBar}>
+                    <span className={styles.colorPreviewLabel}>
+                        {t("MarqueeDelete.ColorPreviewLabel", "Live Preview")}
+                    </span>
+                    <div className={styles.colorPreviewSwatches}>
+                        <div
+                            className={styles.colorPreviewBoxSample}
+                            style={{
+                                backgroundColor: hexWithAlphaCss(palette.marqueeGroundFill, palette.alphaMarqueeFill),
+                                borderColor: palette.marqueeGroundBorder,
+                            }}
+                        />
+                        <div
+                            className={styles.colorPreviewBoxSample}
+                            style={{
+                                backgroundColor: hexWithAlphaCss(palette.marqueeUndergroundFill, palette.alphaMarqueeFill),
+                                borderColor: palette.marqueeUndergroundBorder,
+                            }}
+                        />
+                        {zonePreviewColors.map((hex, i) => (
+                            <span
+                                key={i}
+                                className={styles.colorPreviewDotSample}
+                                style={{
+                                    backgroundColor: hexWithAlphaCss(hex, palette.alphaBuildingFill),
+                                    borderColor: hexWithAlphaCss(palette.darkOutline, palette.alphaOutline),
+                                }}
+                            />
+                        ))}
+                    </div>
+                </div>
+
                 {/* Block 1: Preset Themes */}
                 <div className={styles.colorSection}>
                     <div className={styles.colorSectionTitle}>
                         {t("MarqueeDelete.ColorPresetTitle", "Presets")}
                     </div>
                     <div className={styles.colorPresetGrid}>
-                        {PRESET_THEMES.map((preset) => (
-                            <div
-                                key={preset.id}
-                                role="button"
-                                className={styles.colorPresetBtn}
-                                onMouseDown={(e) => onPrimaryMouseDown(e, () => applyColorPreset(preset.id))}
-                            >
-                                <div className={styles.colorPresetDots}>
-                                    {preset.previewDots.map((dot, idx) => (
-                                        <span
-                                            key={idx}
-                                            className={styles.colorPresetDot}
-                                            style={{ backgroundColor: dot }}
-                                        />
-                                    ))}
+                        {PRESET_THEMES.map((preset) => {
+                            const isActive = activePresetId === preset.id;
+                            return (
+                                <div
+                                    key={preset.id}
+                                    role="button"
+                                    className={`${styles.colorPresetBtn} ${isActive ? styles.colorPresetBtnActive : ""}`}
+                                    onMouseDown={(e) => onPrimaryMouseDown(e, () => applyColorPreset(preset.id))}
+                                >
+                                    <div className={styles.colorPresetLeft}>
+                                        <div className={styles.colorPresetDots}>
+                                            {preset.previewDots.map((dot, idx) => (
+                                                <span
+                                                    key={idx}
+                                                    className={styles.colorPresetDot}
+                                                    style={{ backgroundColor: dot }}
+                                                />
+                                            ))}
+                                        </div>
+                                        <span className={styles.colorPresetName}>
+                                            {t(preset.labelKey, preset.fallback)}
+                                        </span>
+                                    </div>
+                                    {isActive && (
+                                        <span className={styles.colorPresetActiveBadge}>
+                                            {t("MarqueeDelete.ColorPresetActiveTag", "Active")}
+                                        </span>
+                                    )}
                                 </div>
-                                <span className={styles.colorPresetName}>
-                                    {t(preset.labelKey, preset.fallback)}
-                                </span>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 </div>
 
-                {/* Block 2: 18 Color Items in 5 Groups + Single Item Editor */}
+                {/* Block 2: 5 Group Tabs + Active Group Items + Single Item Editor */}
                 <div className={styles.colorSection}>
                     <div className={styles.colorSectionTitle}>
                         {t("MarqueeDelete.ColorItemsTitle", "Highlight & Marquee Colors (18)")}
                     </div>
 
-                    <div className={styles.colorGroupsContainer}>
-                        {COLOR_GROUPS.map((group) => (
-                            <div key={group.id} className={styles.colorGroupBlock}>
-                                <div className={styles.colorGroupLabel}>
-                                    {t(group.titleKey, group.titleFallback)}
+                    <div className={styles.colorGroupTabs}>
+                        {COLOR_GROUPS.map((group) => {
+                            const isTabActive = group.id === activeGroup.id;
+                            return (
+                                <div
+                                    key={group.id}
+                                    role="button"
+                                    className={`${styles.colorGroupTab} ${isTabActive ? styles.colorGroupTabActive : ""}`}
+                                    onMouseDown={(e) => onPrimaryMouseDown(e, () => handleSelectGroup(group.id))}
+                                >
+                                    {t(group.titleKey, group.titleFallback)} ({group.items.length})
                                 </div>
-                                <div className={styles.colorChipsWrap}>
-                                    {group.items.map((item) => {
-                                        const isSelected = item.key === selectedKey;
-                                        const itemHex = palette[item.key];
-                                        return (
-                                            <div
-                                                key={item.key}
-                                                role="button"
-                                                className={`${styles.colorItemChip} ${isSelected ? styles.colorItemChipSelected : ""}`}
-                                                onMouseDown={(e) => onPrimaryMouseDown(e, () => setSelectedKey(item.key))}
-                                            >
-                                                <span
-                                                    className={styles.colorItemSwatch}
-                                                    style={{ backgroundColor: itemHex }}
-                                                />
-                                                <span className={styles.colorItemName}>
-                                                    {t(item.labelKey, item.fallback)}
-                                                </span>
-                                            </div>
-                                        );
-                                    })}
+                            );
+                        })}
+                    </div>
+
+                    <div className={styles.colorChipsWrap}>
+                        {activeGroup.items.map((item) => {
+                            const isSelected = item.key === selectedKey;
+                            const itemHex = palette[item.key];
+                            return (
+                                <div
+                                    key={item.key}
+                                    role="button"
+                                    className={`${styles.colorItemChip} ${isSelected ? styles.colorItemChipSelected : ""}`}
+                                    onMouseDown={(e) => onPrimaryMouseDown(e, () => setSelectedKey(item.key))}
+                                >
+                                    <span
+                                        className={styles.colorItemSwatch}
+                                        style={{ backgroundColor: itemHex }}
+                                    />
+                                    <span className={styles.colorItemName}>
+                                        {t(item.labelKey, item.fallback)}
+                                    </span>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
 
                     {/* Active Item Editor: Preview + Quick Swatches + Div RGB Sliders */}
@@ -519,7 +595,7 @@ export function ColorPaletteModal(props: {
                     <Button
                         variant="flat"
                         focusKey={focusDisabledKey}
-                        className={styles.modalBtnSecondary}
+                        className={styles.secondaryBtn}
                         onSelect={resetColors}
                     >
                         {t("MarqueeDelete.ColorResetBtn", "Reset Defaults")}

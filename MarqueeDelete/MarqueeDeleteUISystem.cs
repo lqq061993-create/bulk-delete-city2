@@ -109,6 +109,9 @@ namespace MarqueeDelete
         private ValueBinding<bool> m_PickSimilarArmedBinding;
 
         private ValueBinding<bool> m_OptConfirmBinding;
+        private ValueBinding<bool> m_OptSkipReviewBinding;
+        private ValueBinding<bool> m_OptPanelGlowBinding;
+        private ValueBinding<bool> m_OptUndoFxBinding;
         private ValueBinding<bool> m_OptCameraAlignBinding;
         private ValueBinding<bool> m_OptProtectOutsideBinding;
         private ValueBinding<bool> m_UndergroundBinding;
@@ -212,6 +215,7 @@ namespace MarqueeDelete
             AddBinding(m_InterruptedLargestUnitBinding = new ValueBinding<int>(Group, "interruptedLargestUnit", 0));
             AddBinding(m_ReviewingInterruptedDeletionBinding = new ValueBinding<bool>(Group, "reviewingInterruptedDeletion", false));
             AddBinding(new TriggerBinding(Group, "reviewInterruptedDeletion", OnReviewInterruptedDeletion));
+            AddBinding(new TriggerBinding(Group, "continueInterruptedDeletion", OnContinueInterruptedDeletion));
             AddBinding(new TriggerBinding(Group, "discardInterruptedDeletion", OnDiscardInterruptedDeletion));
             AddBinding(m_PolygonVertexLimitBinding = new ValueBinding<int>(Group, "polygonVertexLimit", 64));
             AddBinding(new TriggerBinding(Group, "restoreLastSelection", OnRestoreLastSelection));
@@ -253,6 +257,9 @@ namespace MarqueeDelete
             AddBinding(m_PickSimilarArmedBinding = new ValueBinding<bool>(Group, "pickSimilarArmed", false));
 
             AddBinding(m_OptConfirmBinding = new ValueBinding<bool>(Group, "optConfirm", true));
+            AddBinding(m_OptSkipReviewBinding = new ValueBinding<bool>(Group, "optSkipReview", false));
+            AddBinding(m_OptPanelGlowBinding = new ValueBinding<bool>(Group, "optPanelGlow", false));
+            AddBinding(m_OptUndoFxBinding = new ValueBinding<bool>(Group, "optUndoFx", false));
             AddBinding(m_OptCameraAlignBinding = new ValueBinding<bool>(Group, "optCameraAlign", true));
             AddBinding(m_OptProtectOutsideBinding = new ValueBinding<bool>(Group, "optProtectOutside", true));
             AddBinding(m_UndergroundBinding = new ValueBinding<bool>(Group, "underground", false));
@@ -339,6 +346,7 @@ namespace MarqueeDelete
             AddBinding(new TriggerBinding<int>(Group, "toggleRoadFacilityMode", OnToggleRoadFacilityMode));
             AddBinding(new TriggerBinding(Group, "cycleSelectionMode", OnCycleSelectionMode));
             AddBinding(new TriggerBinding(Group, "confirm", OnConfirm));
+            AddBinding(new TriggerBinding(Group, "confirmSkipReview", OnConfirmSkipReview));
             AddBinding(new TriggerBinding(Group, "clear", OnClear));
             AddBinding(new TriggerBinding(Group, "exit", OnExit));
             AddBinding(new TriggerBinding(Group, "confirmImportant", OnConfirmImportant));
@@ -534,6 +542,22 @@ namespace MarqueeDelete
                 undoUi = m_Tool.GetUndoUiSnapshot();
             }
 
+            // Idle fast-path: when neither Bulk Delete nor Bulldoze nor ColorModal is open and no
+            // undo/state change is pending, skip per-frame hotkey loops, metrics, and binding diffing.
+            bool isIdleUnchanged = !m_Dirty &&
+                                   m_HasLastUndoUi &&
+                                   canUse == m_LastCanUse &&
+                                   !active && !m_LastActive &&
+                                   !bulldozeActive && !m_LastBulldozeActive &&
+                                   !colorModalOpen && !m_LastColorModalOpen &&
+                                   !undoUi.IsInProgress && !undoUi.HasActiveUndo &&
+                                   undoUi == m_LastUndoUi &&
+                                   m_RestoreNoticeUntil <= 0f;
+            if (isIdleUnchanged)
+            {
+                return;
+            }
+
             bool canCycleSelectionMode = m_Tool != null && MarqueePointerLogic.CanCycleSelectionMode(
                 allowInput: allowInput,
                 toolOrBulldozeActive: active || bulldozeActive,
@@ -569,8 +593,17 @@ namespace MarqueeDelete
                 OnRestoreLastSelection();
             }
 
+            bool canControlActiveUndo = m_Tool != null && MarqueePointerLogic.CanControlActiveUndo(
+                canUseMod: canUse,
+                allowInput: allowInput,
+                pointerIdle: !pointerBusy,
+                importantModalOpen: m_Tool.ImportantModalOpen,
+                colorModalOpen: colorModalOpen,
+                hasActiveUndo: undoUi.HasActiveUndo);
+
             ProcessPanelHotkeys(
                 MarqueePointerLogic.CanUsePanelHotkeys(allowInput, active || bulldozeActive, !pointerBusy, colorModalOpen),
+                canControlActiveUndo,
                 undoUi);
 
             bool dragging = active && m_Tool.IsDragging;
@@ -648,7 +681,7 @@ namespace MarqueeDelete
             SyncBindings();
         }
 
-        private void ProcessPanelHotkeys(bool panelAllowInput, SelectiveUndoUiSnapshot undoUi)
+        private void ProcessPanelHotkeys(bool panelAllowInput, bool canControlActiveUndo, SelectiveUndoUiSnapshot undoUi)
         {
             SetActionEnabled(m_SwitchModeAction, panelAllowInput);
             if (panelAllowInput && m_SwitchModeAction != null && m_SwitchModeAction.WasPressedThisFrame())
@@ -663,9 +696,8 @@ namespace MarqueeDelete
                 m_Dirty = true;
             }
 
-            bool canTogglePauseUndo = panelAllowInput && undoUi.HasActiveUndo;
-            SetActionEnabled(m_TogglePauseUndoAction, canTogglePauseUndo);
-            if (canTogglePauseUndo && m_TogglePauseUndoAction != null && m_TogglePauseUndoAction.WasPressedThisFrame())
+            SetActionEnabled(m_TogglePauseUndoAction, canControlActiveUndo);
+            if (canControlActiveUndo && m_TogglePauseUndoAction != null && m_TogglePauseUndoAction.WasPressedThisFrame())
             {
                 if (undoUi.IsInProgress)
                 {
@@ -677,8 +709,8 @@ namespace MarqueeDelete
                 }
             }
 
-            SetActionEnabled(m_StopUndoAction, canTogglePauseUndo);
-            if (canTogglePauseUndo && m_StopUndoAction != null && m_StopUndoAction.WasPressedThisFrame())
+            SetActionEnabled(m_StopUndoAction, canControlActiveUndo);
+            if (canControlActiveUndo && m_StopUndoAction != null && m_StopUndoAction.WasPressedThisFrame())
             {
                 OnStopUndo();
             }
@@ -857,6 +889,14 @@ namespace MarqueeDelete
             SyncBindings();
         }
 
+        private void OnContinueInterruptedDeletion()
+        {
+            if (!CanUseTool() || m_Tool == null || !m_Tool.IsToolActive) return;
+
+            m_Tool.ContinueInterruptedDeletion(skipRevalidation: true);
+            SyncBindings();
+        }
+
         private void OnDiscardInterruptedDeletion()
         {
             if (!CanUseTool() || m_Tool == null || !m_Tool.IsToolActive) return;
@@ -972,6 +1012,17 @@ namespace MarqueeDelete
             }
 
             m_Tool.ConfirmPendingDeletion();
+            SyncBindings();
+        }
+
+        private void OnConfirmSkipReview()
+        {
+            if (m_Tool == null || !m_Tool.IsToolActive)
+            {
+                return;
+            }
+
+            m_Tool.ConfirmPendingDeletion(forceSkipRevalidation: true);
             SyncBindings();
         }
 
@@ -1127,6 +1178,18 @@ namespace MarqueeDelete
                 case "office": s.DeleteOffice = value; break;
                 case "confirm":
                     s.ConfirmBeforeDelete = value;
+                    affectsSelection = false;
+                    break;
+                case "skipReview":
+                    s.SkipBatchRevalidation = value;
+                    affectsSelection = false;
+                    break;
+                case "panelGlow":
+                    s.EnablePanelGlow = value;
+                    affectsSelection = false;
+                    break;
+                case "undoFx":
+                    s.EnableUndoProgressFx = value;
                     affectsSelection = false;
                     break;
                 case "cameraAlign":
@@ -1433,6 +1496,9 @@ namespace MarqueeDelete
                 m_FilterIndustrialBinding.Update(Mod.Settings.DeleteIndustrial);
                 m_FilterOfficeBinding.Update(Mod.Settings.DeleteOffice);
                 m_OptConfirmBinding.Update(Mod.Settings.ConfirmBeforeDelete);
+                m_OptSkipReviewBinding.Update(Mod.Settings.SkipBatchRevalidation);
+                m_OptPanelGlowBinding.Update(Mod.Settings.EnablePanelGlow);
+                m_OptUndoFxBinding.Update(Mod.Settings.EnableUndoProgressFx);
                 m_OptCameraAlignBinding.Update(Mod.Settings.CameraAlignedMarquee);
                 m_OptProtectOutsideBinding.Update(Mod.Settings.ProtectOutsideConnections);
 

@@ -104,6 +104,9 @@ namespace MarqueeDelete
         private readonly List<int> m_VisibleBuildings = new List<int>(MaxDetailedBuildings);
         private SelectionResult m_OverlaySelection;
         private float m_NextBuildingRefresh;
+        private float3 m_LastBuildingCamPos;
+        private float3 m_LastBuildingCamFwd;
+        private bool m_HasLastBuildingCamPose;
 
         private ResolvedOverlayColors GetResolvedColors()
         {
@@ -134,6 +137,7 @@ namespace MarqueeDelete
             m_BuildingMarkers.Clear();
             m_VisibleBuildings.Clear();
             m_NextBuildingRefresh = 0;
+            m_HasLastBuildingCamPose = false;
         }
 
         private void DrawBuildingOverlays(
@@ -164,8 +168,18 @@ namespace MarqueeDelete
             float now = UnityEngine.Time.realtimeSinceStartup;
             if (selectionChanged || now >= m_NextBuildingRefresh)
             {
-                RefreshVisibleBuildings(Camera.main);
                 m_NextBuildingRefresh = now + 0.15f;
+                Camera cam = ResolveActiveCamera();
+                if (selectionChanged || HasCameraMovedSignificantly(cam, ref m_LastBuildingCamPos, ref m_LastBuildingCamFwd, ref m_HasLastBuildingCamPose))
+                {
+                    if (selectionChanged && cam != null)
+                    {
+                        m_LastBuildingCamPos = cam.transform.position;
+                        m_LastBuildingCamFwd = cam.transform.forward;
+                        m_HasLastBuildingCamPose = true;
+                    }
+                    RefreshVisibleBuildings(cam);
+                }
             }
 
             bool isStandard = Mod.Settings == null || Mod.Settings.OverlayDetail == OverlayDetailLevel.Standard;

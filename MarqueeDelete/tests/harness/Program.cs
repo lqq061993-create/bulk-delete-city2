@@ -47,9 +47,20 @@ internal static class HarnessProgram
         Run("scenario 16 (strict match outranks a one-ended match)", ScenarioStrictMatchOutranksLooseOne);
         Run("scenario 17 (a spent claim survives another resume)", ScenarioSpentClaimSurvivesAnotherResume);
         Run("scenario 18 (both ends must stand where the recorded segment stood)", ScenarioGeometryNeedsBothEnds);
+        Run("scenario 19 (atomic 1-frame BuildingUnit with SubNet, node-only portal, ParentMesh, CompositionFlags, upgrade)", ScenarioAtomicBuildingUnitSingleFrame);
+        Run("scenario 20 (cross-building isolation keeps adjacent buildings in separate frames)", ScenarioCrossBuildingSubNetIsolation);
+        Run("scenario 21 (external live junction reconnects without DisableMerge and rebuilt Attached parent relinks)", ScenarioExternalJunctionAndRebuiltAttachedParent);
+        Run("scenario 22 (Attached edge outside parent SubNet buffer is captured standalone)", ScenarioAttachedEdgeOutsideSubNetNotDropped);
+        Run("scenario 23 (pre-frozen batched capture preserves unmutated state and skips unsubmitted batches)", ScenarioPreFrozenBatchedCapture);
+        Run("scenario 24 (non-physical ServiceUpgrade without Transform captures and restores)", ScenarioNonPhysicalServiceUpgrade);
+        Run("scenario 25 (composite SubObject SubNet and SubArea defer across Boundary until SubObjectSystem spawns SubObject)", ScenarioCompositeSubObjectSubs);
+        Run("scenario 26 (ground SubNet keeps ParentMesh -1, omits spurious FreeHeight, and queues connection refresh)", ScenarioGroundSubNetAndConnectionRefresh);
+        Run("scenario 27 (oversized batched capture caps PrepareBatchedCapture and prioritizes roads/buildings over trees)", ScenarioMegaBatchPrioritizesNetsAndBuildings);
+        Run("scenario 28 (uninterrupted boundary node drift snaps curve, cross-batch road binds rebuilt junction, driveway keeps DisableMerge)", ScenarioBoundaryDriftAndCrossBatchJunctionBinding);
+        Run("scenario 29 (runtime SubNet recovers ParentMesh from prefab SubNet buffer and LHT-reversed curve)", ScenarioPrefabSubNetParentMeshRecovery);
 
         Console.WriteLine(s_Failures == 0
-            ? "Undo harness: 18 scenarios, " + s_Checks + " checks passed"
+            ? "Undo harness: 29 scenarios, " + s_Checks + " checks passed"
             : "Undo harness: " + s_Failures + " of " + s_Checks + " checks failed");
         return s_Failures == 0 ? 0 : 1;
     }
@@ -208,8 +219,8 @@ internal static class HarnessProgram
 
     private static EntityCommandBuffer StepOnce(EntityManager em, DeletionUndoManager manager, out bool completed)
     {
-        // The manager gates on Time.frameCount, so every batch needs a new frame.
-        UnityEngine.Time.frameCount += 3;
+        // The manager gates on Time.frameCount, so every batch (including road->building boundaries) needs enough frames.
+        UnityEngine.Time.frameCount += 5;
         var ecb = new EntityCommandBuffer();
         manager.Step(em, ecb, out completed);
         return ecb;
@@ -1330,5 +1341,805 @@ internal static class HarnessProgram
         Check(NetCarriers(negSecond) == 0,
             "scenario 18 negative: one end near is not both ends (" + LastAuditLine() + ")");
         Check(manager2.NetIdentityRejected >= 1, "scenario 18 negative: the refusal is counted (" + manager2.NetIdentityRejected + ")");
+    }
+
+    private static Entity MakeObjectPrefab(EntityManager em, int id)
+    {
+        Entity prefab = em.Make(id);
+        em.AddComponentData(prefab, new Game.Prefabs.ObjectData
+        {
+            m_Archetype = new EntityArchetype { m_Archetype = new IntPtr(id) }
+        });
+        return prefab;
+    }
+
+    private static Entity MakeAreaPrefab(EntityManager em, int id)
+    {
+        Entity prefab = em.Make(id);
+        em.AddComponentData(prefab, new Game.Prefabs.AreaData
+        {
+            m_Archetype = new EntityArchetype { m_Archetype = new IntPtr(id) }
+        });
+        return prefab;
+    }
+
+    private static Entity MakeNetPrefab(EntityManager em, int id)
+    {
+        Entity prefab = em.Make(id);
+        em.AddComponentData(prefab, new Game.Prefabs.NetData());
+        return prefab;
+    }
+
+    private static List<T> ReadEmittedComponents<T>(EntityCommandBuffer ecb) where T : struct
+    {
+        var list = new List<T>();
+        foreach (var cmd in ecb.Commands)
+        {
+            if (cmd.Kind == EntityCommandBuffer.Kind.AddComponent && cmd.Type == typeof(T))
+            {
+                list.Add((T)cmd.Value);
+            }
+        }
+        return list;
+    }
+
+    private static Dictionary<Entity, Dictionary<Type, object>> ReadCarrierComponents(EntityCommandBuffer ecb)
+    {
+        var map = new Dictionary<Entity, Dictionary<Type, object>>();
+        foreach (var cmd in ecb.Commands)
+        {
+            if (cmd.Kind == EntityCommandBuffer.Kind.Create)
+            {
+                map[cmd.Entity] = new Dictionary<Type, object>();
+            }
+            else if (cmd.Kind == EntityCommandBuffer.Kind.AddComponent && map.TryGetValue(cmd.Entity, out var bag))
+            {
+                bag[cmd.Type] = cmd.Value;
+            }
+            else if (cmd.Kind == EntityCommandBuffer.Kind.AddBuffer && map.TryGetValue(cmd.Entity, out var bag2))
+            {
+                bag2[cmd.Type] = cmd.Value;
+            }
+        }
+        return map;
+    }
+
+    private static Entity MakeOwnedBuilding(
+        EntityManager em, int baseId, Entity bldPrefab, float3 pos,
+        out Entity[] subNodes, out Entity[] subEdges)
+    {
+        Entity bld = em.Make(baseId);
+        em.AddComponentData(bld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bld, new Game.Objects.Transform { m_Position = pos, m_Rotation = quaternion.identity });
+        em.AddComponentData(bld, new Game.Buildings.Building());
+        em.AddBuffer<Game.Net.SubNet>(bld);
+        em.AddBuffer<Game.Areas.SubArea>(bld);
+        em.AddBuffer<Game.Objects.SubObject>(bld);
+
+        subNodes = new Entity[4];
+        for (int i = 0; i < 4; i++)
+        {
+            Entity n = MakeJunctionAt(em, baseId + 10 + i, pos + new float3(i * 5f, 0f, (i % 2) * 5f));
+            em.AddComponentData(n, new Game.Common.Owner { m_Owner = bld });
+            em.AddComponentData(n, new Game.Tools.LocalTransformCache { m_ParentMesh = 2 });
+            subNodes[i] = n;
+        }
+        subEdges = System.Array.Empty<Entity>();
+        return bld;
+    }
+
+    // 19. A building with SubArea, 4 interconnected SubNet edges, 1 node-only portal, and a physical
+    //     upgrade with its own SubArea + SubNet must restore atomically in a single frame via OwnerDefinition.
+    private static void ScenarioAtomicBuildingUnitSingleFrame()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 5100);
+        Entity upgPrefab = MakeObjectPrefab(em, 5101);
+        Entity areaPrefab = MakeAreaPrefab(em, 5102);
+        Entity netPrefab = MakeNetPrefab(em, 5103);
+
+        Entity bld = MakeOwnedBuilding(em, 6000, bldPrefab, new float3(20f, 0f, 30f), out Entity[] nodes, out _);
+
+        Entity compEntity = em.Make(5999);
+        em.AddComponentData(compEntity, new Game.Prefabs.NetCompositionData
+        {
+            m_Flags = new Game.Prefabs.CompositionFlags
+            {
+                m_General = Game.Prefabs.CompositionFlags.General.Elevated | Game.Prefabs.CompositionFlags.General.Invert
+            }
+        });
+
+        // 4 interconnected SubNet edges + 1 node-only SubNet portal
+        var subNetBuf = em.GetBuffer<Game.Net.SubNet>(bld);
+        for (int i = 0; i < 4; i++)
+        {
+            Entity sNode = nodes[i];
+            Entity eNode = nodes[(i + 1) % 4];
+            float3 sp = em.GetComponentData<Game.Net.Node>(sNode).m_Position;
+            float3 ep = em.GetComponentData<Game.Net.Node>(eNode).m_Position;
+            Entity se = em.Make(6100 + i);
+            em.AddComponentData(se, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+            em.AddComponentData(se, new Game.Net.Edge { m_Start = sNode, m_End = eNode });
+            em.AddComponentData(se, new Game.Net.Curve { m_Bezier = new Colossal.Mathematics.Bezier4x3(sp, sp, ep, ep), m_Length = 7f });
+            em.AddComponentData(se, new Game.Common.Owner { m_Owner = bld });
+            em.AddComponentData(se, new Game.Net.Composition { m_Edge = compEntity });
+            subNetBuf.Add(new Game.Net.SubNet { m_SubNet = se });
+        }
+
+        Entity portalNode = MakeJunctionAt(em, 6120, new float3(22f, 0f, 35f));
+        em.AddComponentData(portalNode, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+        em.AddComponentData(portalNode, new Game.Common.Owner { m_Owner = bld });
+        em.AddComponentData(portalNode, new Game.Tools.LocalTransformCache { m_ParentMesh = 1 });
+        subNetBuf.Add(new Game.Net.SubNet { m_SubNet = portalNode });
+
+        // Building SubArea
+        Entity bldArea = em.Make(6200);
+        em.AddComponentData(bldArea, new Game.Prefabs.PrefabRef { m_Prefab = areaPrefab });
+        em.AddComponentData(bldArea, new Game.Areas.Area());
+        em.Buffer(bldArea,
+            new Game.Areas.Node { m_Position = new float3(10f, 0f, 20f) },
+            new Game.Areas.Node { m_Position = new float3(30f, 0f, 20f) },
+            new Game.Areas.Node { m_Position = new float3(20f, 0f, 40f) });
+        em.Buffer(bld, new Game.Areas.SubArea { m_Area = bldArea });
+
+        // Physical upgrade with its own SubArea and SubNet
+        Entity upg = em.Make(6300);
+        float3 upgPos = new float3(26f, 0f, 30f);
+        em.AddComponentData(upg, new Game.Prefabs.PrefabRef { m_Prefab = upgPrefab });
+        em.AddComponentData(upg, new Game.Objects.Transform { m_Position = upgPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(upg, new Game.Objects.Object());
+        em.AddComponentData(upg, new Game.Buildings.ServiceUpgrade());
+        em.AddComponentData(upg, new Game.Tools.LocalTransformCache { m_ParentMesh = 0 });
+        em.Buffer(bld, new Game.Buildings.InstalledUpgrade { m_Upgrade = upg });
+
+        Entity upgArea = em.Make(6310);
+        em.AddComponentData(upgArea, new Game.Prefabs.PrefabRef { m_Prefab = areaPrefab });
+        em.AddComponentData(upgArea, new Game.Areas.Area());
+        em.Buffer(upgArea,
+            new Game.Areas.Node { m_Position = new float3(24f, 0f, 28f) },
+            new Game.Areas.Node { m_Position = new float3(28f, 0f, 28f) },
+            new Game.Areas.Node { m_Position = new float3(26f, 0f, 32f) });
+        em.Buffer(upg, new Game.Areas.SubArea { m_Area = upgArea });
+
+        Entity upgNode1 = MakeJunctionAt(em, 6320, nodes[1] != Entity.Null ? em.GetComponentData<Game.Net.Node>(nodes[1]).m_Position : upgPos);
+        Entity upgNode2 = MakeJunctionAt(em, 6321, new float3(28f, 0f, 30f));
+        em.AddComponentData(upgNode1, new Game.Common.Owner { m_Owner = upg });
+        em.AddComponentData(upgNode2, new Game.Common.Owner { m_Owner = upg });
+        Entity upgEdge = em.Make(6322);
+        em.AddComponentData(upgEdge, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+        em.AddComponentData(upgEdge, new Game.Net.Edge { m_Start = upgNode1, m_End = upgNode2 });
+        em.AddComponentData(upgEdge, new Game.Net.Curve { m_Bezier = new Colossal.Mathematics.Bezier4x3(upgPos, upgPos, new float3(28f, 0f, 30f), new float3(28f, 0f, 30f)), m_Length = 2f });
+        em.AddComponentData(upgEdge, new Game.Common.Owner { m_Owner = upg });
+        em.Buffer(upg, new Game.Net.SubNet { m_SubNet = upgEdge });
+
+        var roots = new HashSet<Entity> { bld };
+        var plan = new DeletionPlan(roots, new HashSet<Entity> { bld, upg, bldArea, upgArea, upgEdge }, new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager manager = Capture(em, plan);
+
+        em.DestroyEntity(bld);
+        em.DestroyEntity(upg);
+
+        Check(manager.StartUndo(UndoAssetMask.Buildings), "scenario 19: undo starts");
+        EntityCommandBuffer ecb = StepOnce(em, manager, out bool completed);
+        Check(completed, "scenario 19: whole BuildingUnit restores in a single frame (" + LastAuditLine() + ")");
+
+        var carriers = ReadCarrierComponents(ecb);
+        Check(carriers.Count == 10, "scenario 19: all 10 entities emitted in single frame (got " + carriers.Count + ")");
+        Check(ReadEmittedComponents<Game.Tools.NetCourse>(ecb).Count == 6, "scenario 19: 5 SubNet edges + 1 node-only portal emitted together");
+        Check(ReadEmittedComponents<Game.Tools.OwnerDefinition>(ecb).Count == 9, "scenario 19: every child carrier carries OwnerDefinition");
+
+        var courses = ReadEmittedComponents<Game.Tools.NetCourse>(ecb);
+        bool foundPortal = false;
+        int mesh2Count = 0;
+        foreach (var c in courses)
+        {
+            if (c.m_Length == 0f &&
+                (c.m_StartPosition.m_Flags & (Game.Tools.CoursePosFlags.IsFirst | Game.Tools.CoursePosFlags.IsLast)) == (Game.Tools.CoursePosFlags.IsFirst | Game.Tools.CoursePosFlags.IsLast))
+            {
+                foundPortal = true;
+                Check(c.m_StartPosition.m_ParentMesh == 1, "scenario 19: node-only portal preserves m_ParentMesh == 1");
+            }
+            if (c.m_StartPosition.m_ParentMesh == 2) mesh2Count++;
+        }
+        Check(foundPortal, "scenario 19: zero-length node-only SubNet course emitted");
+        Check(mesh2Count == 4, "scenario 19: all 4 SubNet edges preserve m_ParentMesh == 2 (" + mesh2Count + ")");
+
+        var upgradedComps = ReadEmittedComponents<Game.Net.Upgraded>(ecb);
+        Check(upgradedComps.Count >= 4 &&
+              (upgradedComps[0].m_Flags.m_General & (Game.Prefabs.CompositionFlags.General.Elevated | Game.Prefabs.CompositionFlags.General.Invert)) ==
+              (Game.Prefabs.CompositionFlags.General.Elevated | Game.Prefabs.CompositionFlags.General.Invert),
+            "scenario 19: CompositionFlags.General.Elevated and Invert preserved on SubNets");
+        Check(LastAuditContains("Restored: 10") && LastAuditContains("Skipped: 0"),
+            "scenario 19: audit accounts cleanly (" + LastAuditLine() + ")");
+    }
+
+    // 20. Two adjacent buildings both having SubNets emit one building-with-SubNets per frame.
+    private static void ScenarioCrossBuildingSubNetIsolation()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 5200);
+        Entity netPrefab = MakeNetPrefab(em, 5201);
+
+        Entity b1 = MakeOwnedBuilding(em, 6400, bldPrefab, new float3(0f, 0f, 0f), out Entity[] n1, out _);
+        Entity e1 = em.Make(6420);
+        float3 b1p0 = em.GetComponentData<Game.Net.Node>(n1[0]).m_Position;
+        float3 b1p1 = em.GetComponentData<Game.Net.Node>(n1[1]).m_Position;
+        em.AddComponentData(e1, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+        em.AddComponentData(e1, new Game.Net.Edge { m_Start = n1[0], m_End = n1[1] });
+        em.AddComponentData(e1, new Game.Net.Curve { m_Bezier = new Colossal.Mathematics.Bezier4x3(b1p0, b1p0, b1p1, b1p1), m_Length = 5f });
+        em.AddComponentData(e1, new Game.Common.Owner { m_Owner = b1 });
+        em.Buffer(b1, new Game.Net.SubNet { m_SubNet = e1 });
+
+        Entity b2 = MakeOwnedBuilding(em, 6450, bldPrefab, new float3(10f, 0f, 0f), out Entity[] n2, out _);
+        Entity e2 = em.Make(6470);
+        float3 b2p0 = em.GetComponentData<Game.Net.Node>(n2[0]).m_Position;
+        float3 b2p1 = em.GetComponentData<Game.Net.Node>(n2[1]).m_Position;
+        em.AddComponentData(e2, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+        em.AddComponentData(e2, new Game.Net.Edge { m_Start = n2[0], m_End = n2[1] });
+        em.AddComponentData(e2, new Game.Net.Curve { m_Bezier = new Colossal.Mathematics.Bezier4x3(b2p0, b2p0, b2p1, b2p1), m_Length = 5f });
+        em.AddComponentData(e2, new Game.Common.Owner { m_Owner = b2 });
+        em.Buffer(b2, new Game.Net.SubNet { m_SubNet = e2 });
+
+        var roots = new HashSet<Entity> { b1, b2 };
+        var plan = new DeletionPlan(roots, roots, new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager manager = Capture(em, plan);
+        em.DestroyEntity(b1);
+        em.DestroyEntity(b2);
+
+        Check(manager.StartUndo(UndoAssetMask.Buildings), "scenario 20: undo starts");
+        EntityCommandBuffer first = StepOnce(em, manager, out bool done1);
+        Check(!done1 && ReadEmittedComponents<Game.Tools.ObjectDefinition>(first).Count == 1 && NetCarriers(first) == 1,
+            "scenario 20: frame 1 emits exactly building 1 + its SubNet");
+
+        EntityCommandBuffer second = StepOnce(em, manager, out bool done2);
+        Check(done2 && ReadEmittedComponents<Game.Tools.ObjectDefinition>(second).Count == 1 && NetCarriers(second) == 1,
+            "scenario 20: frame 2 emits building 2 + its SubNet and completes");
+    }
+
+    // 21. SubNet connecting to an external street node omits DisableMerge on the external endpoint;
+    //     and a building Attached to a deleted & rebuilt road resolves the new road parent.
+    private static void ScenarioExternalJunctionAndRebuiltAttachedParent()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 5300);
+        Entity netPrefab = MakeNetPrefab(em, 5301);
+
+        Entity roadStart = MakeJunctionAt(em, 6500, new float3(0f, 0f, 0f));
+        Entity roadEnd = MakeJunctionAt(em, 6501, new float3(20f, 0f, 0f));
+        Entity road = MakeEdge(em, 6502, netPrefab, roadStart, roadEnd, 0f, 20f);
+        Link(em, roadStart, road); Link(em, roadEnd, road);
+
+        Entity extStreetNode = MakeJunctionAt(em, 6505, new float3(5f, 0f, 10f));
+        Entity bld = MakeOwnedBuilding(em, 6510, bldPrefab, new float3(10f, 0f, 0f), out Entity[] nodes, out _);
+        em.AddComponentData(bld, new Game.Objects.Attached { m_Parent = road });
+
+        Entity subEdge = em.Make(6530);
+        float3 pStart = em.GetComponentData<Game.Net.Node>(nodes[0]).m_Position;
+        float3 pEnd = em.GetComponentData<Game.Net.Node>(extStreetNode).m_Position;
+        em.AddComponentData(subEdge, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+        em.AddComponentData(subEdge, new Game.Net.Edge { m_Start = nodes[0], m_End = extStreetNode });
+        em.AddComponentData(subEdge, new Game.Net.Curve { m_Bezier = new Colossal.Mathematics.Bezier4x3(pStart, pStart, pEnd, pEnd), m_Length = 10f });
+        em.AddComponentData(subEdge, new Game.Common.Owner { m_Owner = bld });
+        em.Buffer(bld, new Game.Net.SubNet { m_SubNet = subEdge });
+
+        var roots = new HashSet<Entity> { road, bld };
+        var plan = new DeletionPlan(roots, new HashSet<Entity> { road, bld, subEdge }, new HashSet<Entity> { roadStart, roadEnd }, new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager manager = Capture(em, plan);
+
+        DeleteSegment(em, road);
+        em.DestroyEntity(bld);
+
+        Check(manager.StartUndo(UndoAssetMask.All), "scenario 21: undo starts for road + attached building");
+        EntityCommandBuffer netStep = StepOnce(em, manager, out bool doneNet);
+        Check(!doneNet && NetCarriers(netStep) == 1, "scenario 21: road emits in phase 1");
+        List<Entity> rebuiltRoads = ReplayBarrier(em, netStep);
+        Check(rebuiltRoads.Count == 1, "scenario 21: rebuilt road created in EntityManager");
+
+        EntityCommandBuffer bldStep = StepOnce(em, manager, out bool doneBld);
+        Check(doneBld, "scenario 21: attached building + SubNet emit in phase 2");
+
+        var defs = ReadEmittedComponents<Game.Tools.CreationDefinition>(bldStep);
+        bool relinkedRoad = false;
+        foreach (var d in defs)
+        {
+            if (d.m_Prefab == bldPrefab)
+            {
+                relinkedRoad = d.m_Attached == rebuiltRoads[0] && (d.m_Flags & Game.Tools.CreationFlags.Attach) != 0;
+            }
+        }
+        Check(relinkedRoad, "scenario 21: building relinked m_Attached to rebuilt road entity");
+
+        var courses = ReadEmittedComponents<Game.Tools.NetCourse>(bldStep);
+        Check(courses.Count == 1 &&
+              courses[0].m_StartPosition.m_Entity == Entity.Null &&
+              (courses[0].m_StartPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) != 0 &&
+              courses[0].m_EndPosition.m_Entity == extStreetNode &&
+              (courses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) == 0,
+            "scenario 21: owned start keeps DisableMerge while external live junction binds m_EndPosition.m_Entity without DisableMerge");
+    }
+
+    // 22. An Edge with Attached pointing to a building in the plan that does NOT list it in SubNet is not dropped.
+    private static void ScenarioAttachedEdgeOutsideSubNetNotDropped()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 5400);
+        Entity netPrefab = MakeNetPrefab(em, 5401);
+
+        Entity bld = em.Make(6600);
+        em.AddComponentData(bld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bld, new Game.Objects.Transform { m_Position = float3.zero, m_Rotation = quaternion.identity });
+        em.AddComponentData(bld, new Game.Buildings.Building());
+
+        Entity nA = MakeJunction(em, 6601, 0f);
+        Entity nB = MakeJunction(em, 6602, 20f);
+        Entity attachedEdge = MakeEdge(em, 6603, netPrefab, nA, nB, 0f, 20f);
+        em.AddComponentData(attachedEdge, new Game.Objects.Attached { m_Parent = bld });
+
+        var roots = new HashSet<Entity> { bld, attachedEdge };
+        var plan = new DeletionPlan(roots, roots, new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager manager = Capture(em, plan);
+
+        em.DestroyEntity(bld);
+        DeleteSegment(em, attachedEdge);
+
+        Check(manager.StartUndo(UndoAssetMask.All), "scenario 22: attached edge outside SubNet was captured");
+        var rebuilt = new List<Entity>();
+        RunToCompletion(em, manager, rebuilt);
+        Check(rebuilt.Count == 1, "scenario 22: standalone attached edge rebuilt (rebuilt.Count=" + rebuilt.Count + ")");
+    }
+
+    // 23. Pre-frozen batched capture preserves untouched state and excludes unsubmitted roots.
+    private static void ScenarioPreFrozenBatchedCapture()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 5500);
+        Entity netPrefab = MakeNetPrefab(em, 5501);
+
+        Entity b1 = MakeOwnedBuilding(em, 6700, bldPrefab, new float3(0f, 0f, 0f), out Entity[] n1, out _);
+        Entity b2 = MakeOwnedBuilding(em, 6750, bldPrefab, new float3(40f, 0f, 0f), out Entity[] n2, out _);
+        Entity b3Unsubmitted = MakeOwnedBuilding(em, 6800, bldPrefab, new float3(80f, 0f, 0f), out Entity[] _, out _);
+
+        Entity fullSub = em.Make(6790);
+        em.AddComponentData(fullSub, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+        em.AddComponentData(fullSub, new Game.Net.Edge { m_Start = n2[0], m_End = n2[1] });
+        em.AddComponentData(fullSub, new Game.Net.Curve { m_Bezier = new Colossal.Mathematics.Bezier4x3(new float3(40f, 0f, 0f), new float3(40f, 0f, 0f), new float3(45f, 0f, 5f), new float3(45f, 0f, 5f)), m_Length = 7f });
+        em.AddComponentData(fullSub, new Game.Common.Owner { m_Owner = b2 });
+        em.Buffer(b2, new Game.Net.SubNet { m_SubNet = fullSub });
+
+        var allRoots = new HashSet<Entity> { b1, b2, b3Unsubmitted };
+        var fullPlan = new DeletionPlan(allRoots, allRoots, new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+
+        var manager = new DeletionUndoManager();
+        manager.PrepareBatchedCapture(em, fullPlan);
+
+        var batch1Plan = new DeletionPlan(new HashSet<Entity> { b1 }, new HashSet<Entity> { b1 }, new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        manager.RecordSubmittedBatch(em, batch1Plan);
+        em.DestroyEntity(b1);
+
+        // Mutate b2's sub-node before batch 2 is submitted (simulates batch 1 mutation in city);
+        // frozen snapshot must already hold b2's intact pre-batch data.
+        em.DestroyEntity(n2[0]);
+        var batch2Plan = new DeletionPlan(new HashSet<Entity> { b2 }, new HashSet<Entity> { b2 }, new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        manager.RecordSubmittedBatch(em, batch2Plan);
+        em.DestroyEntity(b2);
+
+        // Note b3Unsubmitted is never passed to RecordSubmittedBatch (e.g., player canceled/stopped).
+        manager.CommitDeletionCapture();
+
+        Check(manager.StartUndo(UndoAssetMask.Buildings), "scenario 23: frozen batched capture commits submitted batches");
+        EntityCommandBuffer step1 = StepOnce(em, manager, out bool done1);
+        EntityCommandBuffer step2 = done1 ? step1 : StepOnce(em, manager, out bool done2);
+        Check(manager.GetUiSnapshot(UndoAssetMask.Buildings).FinishedRestoredCount == 3,
+            "scenario 23: restores exactly b1(1) + b2(1 + intact SubNet = 2) = 3, skipping unsubmitted b3");
+    }
+
+    // 24. Non-physical ServiceUpgrade without Game.Objects.Transform captures cleanly and restores.
+    private static void ScenarioNonPhysicalServiceUpgrade()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 5600);
+        Entity upgPrefab = MakeObjectPrefab(em, 5601);
+
+        Entity bld = em.Make(6900);
+        em.AddComponentData(bld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bld, new Game.Objects.Transform { m_Position = new float3(5f, 0f, 5f), m_Rotation = quaternion.identity });
+        em.AddComponentData(bld, new Game.Buildings.Building());
+
+        Entity upg = em.Make(6901);
+        em.AddComponentData(upg, new Game.Prefabs.PrefabRef { m_Prefab = upgPrefab });
+        em.AddComponentData(upg, new Game.Buildings.ServiceUpgrade());
+        em.Buffer(bld, new Game.Buildings.InstalledUpgrade { m_Upgrade = upg });
+
+        var roots = new HashSet<Entity> { bld };
+        var plan = new DeletionPlan(roots, new HashSet<Entity> { bld, upg }, new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager manager = Capture(em, plan);
+
+        var uiSnap = manager.GetUiSnapshot(UndoAssetMask.Buildings);
+        Check(uiSnap.NotCapturedCount == 0 && uiSnap.NextCount == 2,
+            "scenario 24: non-physical upgrade captured with NotCapturedCount==0 and NextCount==2");
+
+        em.DestroyEntity(bld);
+        em.DestroyEntity(upg);
+
+        Check(manager.StartUndo(UndoAssetMask.Buildings), "scenario 24: undo starts");
+        EntityCommandBuffer step1 = StepOnce(em, manager, out bool done1);
+        Check(!done1 && ReadEmittedComponents<Game.Tools.ObjectDefinition>(step1).Count == 1,
+            "scenario 24: building emits in step 1");
+
+        // Replay building root creation into EntityManager so TryResolveOwner finds it
+        Entity rebuiltBld = em.CreateEntity();
+        em.AddComponentData(rebuiltBld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(rebuiltBld, new Game.Objects.Transform { m_Position = new float3(5f, 0f, 5f), m_Rotation = quaternion.identity });
+
+        EntityCommandBuffer step2 = StepOnce(em, manager, out bool done2);
+        Check(done2, "scenario 24: deferred upgrade emits after boundary and completes");
+        var objDefs = ReadEmittedComponents<Game.Tools.ObjectDefinition>(step2);
+        Check(objDefs.Count == 1 && objDefs[0].m_ParentMesh == 0 && math.all(objDefs[0].m_LocalPosition == float3.zero),
+            "scenario 24: non-physical upgrade emits with ParentMesh==0 and zero LocalPosition");
+    }
+
+    // 25. Composite SubObject SubNets & SubAreas defer across a Boundary so FindOwnersSystem2 cannot
+    //     strip their OwnerDefinition before SubObjectSystem spawns the SubObject; once the live
+    //     SubObject exists, they emit directly with CreationDefinition.m_Owner = liveSubObj.
+    private static void ScenarioCompositeSubObjectSubs()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 5700);
+        Entity subPrefab = MakeObjectPrefab(em, 5701);
+        Entity areaPrefab = MakeAreaPrefab(em, 5702);
+        Entity netPrefab = MakeNetPrefab(em, 5703);
+
+        Entity bld = em.Make(7100);
+        em.AddComponentData(bld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bld, new Game.Objects.Transform { m_Position = new float3(50f, 0f, 50f), m_Rotation = quaternion.identity });
+        em.AddComponentData(bld, new Game.Buildings.Building());
+
+        Entity subObj = em.Make(7101);
+        float3 subPos = new float3(54f, 0f, 52f);
+        em.AddComponentData(subObj, new Game.Prefabs.PrefabRef { m_Prefab = subPrefab });
+        em.AddComponentData(subObj, new Game.Objects.Transform { m_Position = subPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(subObj, new Game.Common.Owner { m_Owner = bld });
+        em.Buffer(bld, new Game.Objects.SubObject { m_SubObject = subObj });
+
+        Entity subArea = em.Make(7110);
+        em.AddComponentData(subArea, new Game.Prefabs.PrefabRef { m_Prefab = areaPrefab });
+        em.AddComponentData(subArea, new Game.Areas.Area());
+        em.Buffer(subArea,
+            new Game.Areas.Node { m_Position = subPos },
+            new Game.Areas.Node { m_Position = subPos + new float3(2f, 0f, 0f) },
+            new Game.Areas.Node { m_Position = subPos + new float3(0f, 0f, 2f) });
+        em.Buffer(subObj, new Game.Areas.SubArea { m_Area = subArea });
+
+        Entity snA = MakeJunctionAt(em, 7120, subPos);
+        Entity snB = MakeJunctionAt(em, 7121, subPos + new float3(3f, 0f, 0f));
+        em.AddComponentData(snA, new Game.Common.Owner { m_Owner = subObj });
+        em.AddComponentData(snB, new Game.Common.Owner { m_Owner = subObj });
+        Entity subEdge = em.Make(7122);
+        em.AddComponentData(subEdge, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+        em.AddComponentData(subEdge, new Game.Net.Edge { m_Start = snA, m_End = snB });
+        em.AddComponentData(subEdge, new Game.Net.Curve { m_Bezier = new Colossal.Mathematics.Bezier4x3(subPos, subPos, subPos + new float3(3f, 0f, 0f), subPos + new float3(3f, 0f, 0f)), m_Length = 3f });
+        em.AddComponentData(subEdge, new Game.Common.Owner { m_Owner = subObj });
+        em.Buffer(subObj, new Game.Net.SubNet { m_SubNet = subEdge });
+
+        var roots = new HashSet<Entity> { bld };
+        var plan = new DeletionPlan(roots, new HashSet<Entity> { bld, subObj, subArea, subEdge }, new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager manager = Capture(em, plan);
+
+        em.DestroyEntity(bld);
+        em.DestroyEntity(subObj);
+
+        Check(manager.StartUndo(UndoAssetMask.Buildings), "scenario 25: undo starts");
+        EntityCommandBuffer ecb1 = StepOnce(em, manager, out bool completed1);
+        Check(!completed1, "scenario 25: pauses at Boundary after building root so SubObjectSystem can spawn SubObject");
+        var objDefs = ReadEmittedComponents<Game.Tools.ObjectDefinition>(ecb1);
+        Check(objDefs.Count == 1, "scenario 25: does not duplicate auto-spawned SubObject (only 1 ObjectDefinition for building root)");
+        Check(ReadEmittedComponents<Game.Tools.OwnerDefinition>(ecb1).Count == 0,
+            "scenario 25: does not emit SubObjectSubs before SubObject exists");
+
+        // Simulate GenerateObjectsSystem + SubObjectSystem spawning the live building and SubObject.
+        Entity liveBld = em.Make(7200);
+        em.AddComponentData(liveBld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(liveBld, new Game.Objects.Transform { m_Position = new float3(50f, 0f, 50f), m_Rotation = quaternion.identity });
+        em.AddComponentData(liveBld, new Game.Buildings.Building());
+        Entity liveSubObj = em.Make(7201);
+        em.AddComponentData(liveSubObj, new Game.Prefabs.PrefabRef { m_Prefab = subPrefab });
+        em.AddComponentData(liveSubObj, new Game.Objects.Transform { m_Position = subPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(liveSubObj, new Game.Common.Owner { m_Owner = liveBld });
+
+        var defs2 = new List<Game.Tools.CreationDefinition>();
+        bool completed2 = false;
+        for (int tries = 0; tries < 4 && !completed2; tries++)
+        {
+            EntityCommandBuffer step = StepOnce(em, manager, out completed2);
+            defs2.AddRange(ReadEmittedComponents<Game.Tools.CreationDefinition>(step));
+        }
+        Check(completed2, "scenario 25: completes after live SubObject exists");
+        Check(defs2.Count == 2 && defs2.All(d => d.m_Owner == liveSubObj),
+            "scenario 25: SubObject SubArea and SubNet bind directly to liveSubObj via CreationDefinition.m_Owner");
+        Check(LastAuditContains("Restored: 3") && LastAuditContains("Skipped: 0"),
+            "scenario 25: audit accounts cleanly (" + LastAuditLine() + ")");
+    }
+
+    // 26. A ground-level building SubNet with small terrain NetElevation and no LocalTransformCache must
+    //     keep m_ParentMesh == -1 and omit CoursePosFlags.FreeHeight so CS2 ground road matching succeeds,
+    //     and completing the restore must queue post-restore connection refresh coordinates.
+    private static void ScenarioGroundSubNetAndConnectionRefresh()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 5600);
+        Entity netPrefab = MakeNetPrefab(em, 5601);
+
+        Entity bld = em.Make(7200);
+        float3 bldPos = new float3(30f, 0f, 40f);
+        em.AddComponentData(bld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bld, new Game.Objects.Transform { m_Position = bldPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(bld, new Game.Buildings.Building());
+
+        Entity snA = MakeJunctionAt(em, 7210, bldPos);
+        Entity snB = MakeJunctionAt(em, 7211, bldPos + new float3(4f, 0f, 0f));
+        em.AddComponentData(snA, new Game.Common.Owner { m_Owner = bld });
+        em.AddComponentData(snB, new Game.Common.Owner { m_Owner = bld });
+        em.AddComponentData(snA, new Game.Net.Elevation { m_Elevation = new float2(0.01f, -0.02f) });
+        em.AddComponentData(snB, new Game.Net.Elevation { m_Elevation = new float2(0.02f, 0f) });
+
+        Entity subEdge = em.Make(7212);
+        em.AddComponentData(subEdge, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+        em.AddComponentData(subEdge, new Game.Net.Edge { m_Start = snA, m_End = snB });
+        em.AddComponentData(subEdge, new Game.Net.Curve { m_Bezier = new Colossal.Mathematics.Bezier4x3(bldPos, bldPos, bldPos + new float3(4f, 0f, 0f), bldPos + new float3(4f, 0f, 0f)), m_Length = 4f });
+        em.AddComponentData(subEdge, new Game.Net.Elevation { m_Elevation = new float2(0.01f, 0.01f) });
+        em.AddComponentData(subEdge, new Game.Common.Owner { m_Owner = bld });
+        em.Buffer(bld, new Game.Net.SubNet { m_SubNet = subEdge });
+
+        var roots = new HashSet<Entity> { bld };
+        var plan = new DeletionPlan(roots, new HashSet<Entity> { bld, subEdge }, new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager manager = Capture(em, plan);
+
+        em.DestroyEntity(bld);
+        Check(manager.StartUndo(UndoAssetMask.Buildings), "scenario 26: undo starts");
+        EntityCommandBuffer ecb = StepOnce(em, manager, out bool completed);
+        Check(completed, "scenario 26: completes cleanly");
+
+        var courses = ReadEmittedComponents<Game.Tools.NetCourse>(ecb);
+        Check(courses.Count == 1, "scenario 26: one SubNet course emitted");
+        if (courses.Count == 1)
+        {
+            Check(courses[0].m_StartPosition.m_ParentMesh == -1 && courses[0].m_EndPosition.m_ParentMesh == -1,
+                "scenario 26: ground SubNet keeps m_ParentMesh == -1 (" + courses[0].m_StartPosition.m_ParentMesh + "," + courses[0].m_EndPosition.m_ParentMesh + ")");
+            Check((courses[0].m_StartPosition.m_Flags & Game.Tools.CoursePosFlags.FreeHeight) == 0 &&
+                  (courses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.FreeHeight) == 0,
+                "scenario 26: sub-5cm terrain slope does not set CoursePosFlags.FreeHeight");
+        }
+
+        Check(manager.HasPendingConnectionRefresh, "scenario 26: connection refresh queued after building restore");
+        var bldPositions = new List<float3>();
+        var netPositions = new List<float3>();
+        Check(manager.TryConsumeConnectionRefresh(bldPositions, netPositions) && bldPositions.Count == 1 && bldPositions[0].Equals(bldPos),
+            "scenario 26: consumed refresh list contains restored building position");
+        Check(!manager.HasPendingConnectionRefresh, "scenario 26: refresh queue clears after consumption");
+    }
+
+    // 27. Selections larger than MaxEntitiesPerSnapshot (8,000) must bound PrepareBatchedCapture work
+    //     to MaxEntitiesPerSnapshot AND prioritize Networks & Buildings over Trees even when Trees are
+    //     submitted in earlier batches.
+    private static void ScenarioMegaBatchPrioritizesNetsAndBuildings()
+    {
+        var em = new EntityManager();
+        Entity treePrefab = MakeObjectPrefab(em, 5800);
+        Entity bldPrefab = MakeObjectPrefab(em, 5801);
+        Entity netPrefab = MakeNetPrefab(em, 5802);
+
+        const int treeCount = 8100;
+        const int bldCount = 50;
+        const int netCount = 100;
+
+        var treeEntities = new List<Entity>(treeCount);
+        var bldEntities = new List<Entity>(bldCount);
+        var netEntities = new List<Entity>(netCount);
+        var allRoots = new HashSet<Entity>(treeCount + bldCount + netCount);
+
+        int id = 10000;
+        for (int i = 0; i < treeCount; i++)
+        {
+            Entity t = em.Make(id++);
+            em.AddComponentData(t, new Game.Prefabs.PrefabRef { m_Prefab = treePrefab });
+            em.AddComponentData(t, new Game.Objects.Transform { m_Position = new float3(i * 2f, 0f, 0f), m_Rotation = quaternion.identity });
+            em.AddComponentData(t, new Game.Objects.Object());
+            em.AddComponentData(t, new Game.Objects.Tree());
+            treeEntities.Add(t);
+            allRoots.Add(t);
+        }
+
+        for (int i = 0; i < bldCount; i++)
+        {
+            Entity b = em.Make(id++);
+            em.AddComponentData(b, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+            em.AddComponentData(b, new Game.Objects.Transform { m_Position = new float3(i * 10f, 0f, 50f), m_Rotation = quaternion.identity });
+            em.AddComponentData(b, new Game.Buildings.Building());
+            bldEntities.Add(b);
+            allRoots.Add(b);
+        }
+
+        for (int i = 0; i < netCount; i++)
+        {
+            Entity nA = MakeJunctionAt(em, id++, new float3(i * 15f, 0f, 100f));
+            Entity nB = MakeJunctionAt(em, id++, new float3(i * 15f + 10f, 0f, 100f));
+            Entity e = MakeEdge(em, id++, netPrefab, nA, nB, i * 15f, i * 15f + 10f);
+            netEntities.Add(e);
+            allRoots.Add(e);
+        }
+
+        var fullPlan = new DeletionPlan(allRoots, new HashSet<Entity>(allRoots), new HashSet<Entity>(), new HashSet<Entity>(allRoots), new HashSet<Entity>(allRoots));
+        var manager = new DeletionUndoManager();
+        manager.PrepareBatchedCapture(em, fullPlan);
+
+        Check(manager.FrozenCaptureWeightForTest == DeletionUndoManager.MaxEntitiesPerSnapshot &&
+              manager.FrozenCaptureRootsForTest == DeletionUndoManager.MaxEntitiesPerSnapshot,
+            "scenario 27: PrepareBatchedCapture caps frozen records at MaxEntitiesPerSnapshot (" + manager.FrozenCaptureRootsForTest + ")");
+
+        // Simulate DeletionPhase submitting ALL trees and buildings BEFORE road edges!
+        var treeSet = new HashSet<Entity>(treeEntities);
+        manager.RecordSubmittedBatch(em, new DeletionPlan(treeSet, treeSet, new HashSet<Entity>(), treeSet, treeSet));
+        for (int i = 0; i < treeEntities.Count; i++) em.DestroyEntity(treeEntities[i]);
+
+        var bldSet = new HashSet<Entity>(bldEntities);
+        manager.RecordSubmittedBatch(em, new DeletionPlan(bldSet, bldSet, new HashSet<Entity>(), bldSet, bldSet));
+        for (int i = 0; i < bldEntities.Count; i++) em.DestroyEntity(bldEntities[i]);
+
+        var netSet = new HashSet<Entity>(netEntities);
+        manager.RecordSubmittedBatch(em, new DeletionPlan(netSet, netSet, new HashSet<Entity>(), netSet, netSet));
+        for (int i = 0; i < netEntities.Count; i++) DeleteSegment(em, netEntities[i]);
+
+        manager.CommitDeletionCapture();
+
+        var uiSnap = manager.GetUiSnapshot(UndoAssetMask.All);
+        Check(uiSnap.Notice == "UndoPartial", "scenario 27: snapshot marks truncated as UndoPartial (" + uiSnap.Notice + ")");
+        Check(uiSnap.Counts.Networks == netCount && uiSnap.Counts.Buildings == bldCount,
+            "scenario 27: all " + netCount + " networks and " + bldCount + " buildings survive snapshot cap (" + uiSnap.Counts.Networks + " nets, " + uiSnap.Counts.Buildings + " blds)");
+        Check(uiSnap.NextCount == DeletionUndoManager.MaxEntitiesPerSnapshot,
+            "scenario 27: total snapshot count respects MaxEntitiesPerSnapshot (" + uiSnap.NextCount + ")");
+    }
+
+    // 28. Uninterrupted undo accepts CS2 boundary node geometry drift (e.g. 1.2m) and snaps the rebuilt
+    //     curve endpoint to the live node; cross-batch road restore binds dead shared junctions to the
+    //     live junction created by the previous batch; and building driveway SubNets omit DisableMerge.
+    private static void ScenarioBoundaryDriftAndCrossBatchJunctionBinding()
+    {
+        var em = new EntityManager();
+        Entity netPrefab = MakeNetPrefab(em, 5900);
+        Entity bldPrefab = MakeObjectPrefab(em, 5901);
+
+        Entity nodeA = MakeJunctionAt(em, 9001, new float3(0f, 0f, 0f));
+        Entity nodeB = MakeJunctionAt(em, 9002, new float3(50f, 0f, 0f));
+        Entity nodeC = MakeJunctionAt(em, 9003, new float3(100f, 0f, 0f));
+        Entity segAB = MakeEdge(em, 9010, netPrefab, nodeA, nodeB, 0f, 50f);
+        Entity segBC = MakeEdge(em, 9011, netPrefab, nodeB, nodeC, 50f, 100f);
+        Link(em, nodeA, segAB); Link(em, nodeB, segAB);
+        Link(em, nodeB, segBC); Link(em, nodeC, segBC);
+
+        // Building with an owned driveway SubNet (both ends owned by building -> Entity.Null).
+        Entity bld = MakeOwnedBuilding(em, 9020, bldPrefab, new float3(50f, 0f, 12f), out Entity[] bldNodes, out _);
+        Entity drv = em.Make(9040);
+        float3 d0 = em.GetComponentData<Game.Net.Node>(bldNodes[0]).m_Position;
+        float3 d1 = em.GetComponentData<Game.Net.Node>(bldNodes[1]).m_Position;
+        em.AddComponentData(drv, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+        em.AddComponentData(drv, new Game.Net.Edge { m_Start = bldNodes[0], m_End = bldNodes[1] });
+        em.AddComponentData(drv, new Game.Net.Curve { m_Bezier = new Colossal.Mathematics.Bezier4x3(d0, d0, d1, d1), m_Length = math.distance(d0, d1) });
+        em.AddComponentData(drv, new Game.Common.Owner { m_Owner = bld });
+        em.Buffer(bld, new Game.Net.SubNet { m_SubNet = drv });
+
+        var roots = new HashSet<Entity> { segAB, segBC, bld };
+        var plan = new DeletionPlan(roots, new HashSet<Entity> { segAB, segBC, bld, drv }, new HashSet<Entity> { nodeA, nodeB, nodeC }, new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager manager = Capture(em, plan);
+
+        // Delete both segments + interior shared nodeB + building; survive boundary nodeA & nodeC.
+        DeleteSegment(em, segAB);
+        DeleteSegment(em, segBC);
+        em.DestroyEntity(nodeB);
+        em.DestroyEntity(bld);
+
+        // Simulate CS2 geometry recalculation shifting surviving boundary nodeC by 1.2m on deletion.
+        Game.Net.Node driftedC = em.GetComponentData<Game.Net.Node>(nodeC);
+        driftedC.m_Position = new float3(101.2f, 0f, 0f);
+        em.Set(nodeC, driftedC);
+
+        Check(manager.StartUndo(UndoAssetMask.All), "scenario 28: undo starts");
+
+        // Batch 1 restores segAB (creates a brand-new live junction at B = (50,0,0)).
+        EntityCommandBuffer step1 = StepOnce(em, manager, out bool done1);
+        Check(!done1 && NetCarriers(step1) == 1, "scenario 28: batch 1 restores segAB");
+        List<Entity> rebuilt1 = ReplayBarrier(em, step1);
+        Entity rebuiltNodeB = em.GetComponentData<Game.Net.Edge>(rebuilt1[0]).m_End;
+        Check(rebuiltNodeB != Entity.Null && rebuiltNodeB != nodeB, "scenario 28: batch 1 created new live nodeB");
+
+        // Batch 2 restores segBC: must NOT reject drifted nodeC (1.2m), must snap curve end to 101.2f,
+        // and must bind m_StartPosition.m_Entity directly to rebuiltNodeB!
+        EntityCommandBuffer step2 = StepOnce(em, manager, out bool done2);
+        Check(!done2 && NetCarriers(step2) == 1, "scenario 28: batch 2 restores segBC despite 1.2m boundary drift");
+        var bcCourses = ReadEmittedComponents<Game.Tools.NetCourse>(step2);
+        Check(bcCourses.Count == 1 &&
+              bcCourses[0].m_StartPosition.m_Entity == rebuiltNodeB &&
+              bcCourses[0].m_EndPosition.m_Entity == nodeC &&
+              math.abs(bcCourses[0].m_EndPosition.m_Position.x - 101.2f) < 0.01f &&
+              math.abs(bcCourses[0].m_Curve.d.x - 101.2f) < 0.01f,
+            "scenario 28: segBC binds rebuiltNodeB and snaps end curve to drifted nodeC");
+        ReplayBarrier(em, step2);
+
+        // Boundary + Building step (stepWait=5, so advance frameCount cleanly).
+        EntityCommandBuffer step3 = default;
+        bool done3 = false;
+        for (int tries = 0; tries < 6 && !done3; tries++)
+        {
+            UnityEngine.Time.frameCount += 6;
+            step3 = new EntityCommandBuffer();
+            manager.Step(em, step3, out done3);
+            if (ReadEmittedComponents<Game.Tools.ObjectDefinition>(step3).Count > 0) break;
+        }
+        var bldCourses = ReadEmittedComponents<Game.Tools.NetCourse>(step3);
+        Check(done3 && bldCourses.Count == 1 &&
+              (bldCourses[0].m_StartPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) != 0 &&
+              (bldCourses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) != 0 &&
+              (bldCourses[0].m_StartPosition.m_Flags & Game.Tools.CoursePosFlags.FreeHeight) == 0 &&
+              (bldCourses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.FreeHeight) == 0,
+            "scenario 28: owned building driveway SubNet keeps DisableMerge and omits FreeHeight matching vanilla ZoneSpawnSystem");
+        Check(manager.NetPositionRejected == 0, "scenario 28: zero NetPositionRejected (" + manager.NetPositionRejected + ")");
+    }
+
+    // 29. Runtime building SubNets without LocalTransformCache recover exact m_ParentMesh from the
+    //     building prefab's Game.Prefabs.SubNet buffer (including LHT-reversed curves), so
+    //     CourseSplitSystem.CalculateElevation preserves their elevation instead of zeroing it.
+    private static void ScenarioPrefabSubNetParentMeshRecovery()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 5950);
+        Entity netPrefab = MakeNetPrefab(em, 5951);
+
+        // Prefab SubNet has m_ParentMesh = (0, -1) on local curve (0,2,0) -> (0,0,8).
+        var localCurve = new Colossal.Mathematics.Bezier4x3(
+            new float3(0f, 2f, 0f), new float3(0f, 2f, 2f), new float3(0f, 0f, 6f), new float3(0f, 0f, 8f));
+        em.Buffer(bldPrefab, new Game.Prefabs.SubNet
+        {
+            m_Prefab = netPrefab,
+            m_Curve = localCurve,
+            m_NodeIndex = new int2(0, 1),
+            m_ParentMesh = new int2(0, -1),
+        });
+
+        float3 bldPos = new float3(40f, 10f, 20f);
+        Entity bld = em.Make(9100);
+        em.AddComponentData(bld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bld, new Game.Objects.Transform { m_Position = bldPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(bld, new Game.Buildings.Building());
+
+        // Live runtime SubNet is reversed (as in LHT) and carries NO LocalTransformCache!
+        float3 liveStart = bldPos + new float3(0f, 0f, 8f);
+        float3 liveEnd = bldPos + new float3(0f, 2f, 0f);
+        Entity nStart = MakeJunctionAt(em, 9101, liveStart);
+        Entity nEnd = MakeJunctionAt(em, 9102, liveEnd);
+        em.AddComponentData(nStart, new Game.Common.Owner { m_Owner = bld });
+        em.AddComponentData(nEnd, new Game.Common.Owner { m_Owner = bld });
+        em.AddComponentData(nEnd, new Game.Net.Elevation { m_Elevation = new float2(2f, 2f) });
+
+        Entity subEdge = em.Make(9103);
+        em.AddComponentData(subEdge, new Game.Prefabs.PrefabRef { m_Prefab = netPrefab });
+        em.AddComponentData(subEdge, new Game.Net.Edge { m_Start = nStart, m_End = nEnd });
+        em.AddComponentData(subEdge, new Game.Net.Curve { m_Bezier = new Colossal.Mathematics.Bezier4x3(liveStart, liveStart, liveEnd, liveEnd), m_Length = 8.25f });
+        em.AddComponentData(subEdge, new Game.Common.Owner { m_Owner = bld });
+        em.Buffer(bld, new Game.Net.SubNet { m_SubNet = subEdge });
+
+        var roots = new HashSet<Entity> { bld };
+        var plan = new DeletionPlan(roots, new HashSet<Entity> { bld, subEdge }, new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager manager = Capture(em, plan);
+
+        em.DestroyEntity(bld);
+        Check(manager.StartUndo(UndoAssetMask.Buildings), "scenario 29: undo starts");
+        EntityCommandBuffer ecb = StepOnce(em, manager, out bool done);
+        Check(done, "scenario 29: completes in 1 step");
+        var courses = ReadEmittedComponents<Game.Tools.NetCourse>(ecb);
+        Check(courses.Count == 1 &&
+              courses[0].m_StartPosition.m_ParentMesh == -1 &&
+              courses[0].m_EndPosition.m_ParentMesh == 0 &&
+              (courses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.FreeHeight) == 0 &&
+              (courses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) != 0,
+            "scenario 29: reversed runtime SubNet recovers swapped m_ParentMesh (-1, 0) from prefab without LocalTransformCache");
     }
 }

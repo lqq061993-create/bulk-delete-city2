@@ -31,6 +31,7 @@ namespace Game.Net
     public struct SubNet : IBufferElementData { public Entity m_SubNet; }
     public struct ConnectedEdge : IBufferElementData { public Entity m_Edge; }
     public struct Upgraded : IComponentData { public Game.Prefabs.CompositionFlags m_Flags; }
+    public struct Composition : IComponentData { public Entity m_Edge; public Entity m_StartNode; public Entity m_EndNode; }
     public struct Road : IComponentData { }
     public struct Lane : IComponentData { public Entity m_StartNode; public Entity m_MiddleNode; public Entity m_EndNode; }
     public enum PathMethod : byte { None = 0 }
@@ -43,9 +44,43 @@ namespace Game.Prefabs
     public struct ObjectData : IComponentData { public EntityArchetype m_Archetype; }
     public struct AreaData : IComponentData { public EntityArchetype m_Archetype; }
 
-    // Real CompositionFlags is a struct of flag groups, not an enum. The restore path only carries
-    // the value from capture to emission, so one opaque field is enough here.
-    public struct CompositionFlags { public uint m_General; }
+    // Real CompositionFlags is a struct of flag groups, including nested General flags.
+    public struct CompositionFlags
+    {
+        [Flags]
+        public enum General : uint
+        {
+            Node = 1,
+            Edge = 2,
+            Invert = 4,
+            Flip = 8,
+            DeadEnd = 16,
+            Intersection = 32,
+            Roundabout = 64,
+            LevelCrossing = 128,
+            Crosswalk = 256,
+            MedianBreak = 512,
+            TrafficLights = 1024,
+            Elevated = 65536,
+            Tunnel = 131072,
+        }
+
+        public General m_General;
+    }
+
+    public struct NetCompositionData : IComponentData
+    {
+        public CompositionFlags m_Flags;
+    }
+
+    public struct SubNet : IBufferElementData
+    {
+        public Entity m_Prefab;
+        public Colossal.Mathematics.Bezier4x3 m_Curve;
+        public int2 m_NodeIndex;
+        public int2 m_ParentMesh;
+        public CompositionFlags m_Upgrades;
+    }
 }
 
 namespace Game.Objects
@@ -85,6 +120,7 @@ namespace Game.Buildings
 {
     public struct Building : IComponentData { public Entity m_RoadEdge; public float m_CurvePosition; public uint m_OptionMask; }
     public struct InstalledUpgrade : IBufferElementData { public Entity m_Upgrade; public uint m_OptionMask; }
+    public struct ServiceUpgrade : IComponentData { }
     public struct Signature : IComponentData { }
 }
 
@@ -173,11 +209,24 @@ namespace Game.Tools
 
     public struct Temp : IComponentData { public Entity m_Original; public float m_CurvePosition; public int m_Value; public int m_Cost; }
 
-    public struct OwnerDefinition
+    public struct OwnerDefinition : IComponentData, IEquatable<OwnerDefinition>
     {
         public Entity m_Prefab;
         public float3 m_Position;
         public quaternion m_Rotation;
+
+        public bool Equals(OwnerDefinition other) =>
+            m_Prefab.Equals(other.m_Prefab) && m_Position.Equals(other.m_Position) && m_Rotation.Equals(other.m_Rotation);
+    }
+
+    public struct LocalTransformCache : IComponentData
+    {
+        public float3 m_Position;
+        public quaternion m_Rotation;
+        public int m_ParentMesh;
+        public int m_GroupIndex;
+        public int m_Probability;
+        public int m_PrefabSubIndex;
     }
 
     public sealed class ToolOutputBarrier

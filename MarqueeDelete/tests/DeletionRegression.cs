@@ -675,14 +675,14 @@ class DeletionRegression
             "A fresh undo clears the gate and the emitted records a reused snapshot carries");
 
         string missBody = MethodBody(undoSourceForVerdicts, "private bool NetLinksIntact(EntityManager em, in UndoNetRecord rec, int netIndex, UndoSnapshot snap)", 3000);
-        Check(missBody.Contains("if (snap.Verdicts == null)") && missBody.Contains("PositionAllowsRebuild(em, rec.StartNode, rec.StartPos)"),
+        Check(missBody.Contains("if (snap.Verdicts == null)") && missBody.Contains("PositionAllowsRebuild(em, rec.StartNode, rec.StartPos,"),
             "A batch without verdicts checks junction positions only");
         Check(missBody.Contains("m_NetPositionRejected++;"), "A position refusal is counted separately");
         Check(missBody.Contains("m_NetVerdictMisses++"), "A verdict miss is counted, not guessed");
         Check(!missBody.Contains("JudgeProbe("),
             "A verdict miss must not fall back to reading the junction after earlier batches landed");
 
-        string emitRecordBody = MethodBody(undoSourceForVerdicts, "private static bool EmitNetRecord(", 6000);
+        string emitRecordBody = MethodBody(undoSourceForVerdicts, "private bool EmitNetRecord(", 10000);
         Check(emitRecordBody.Contains("out Entity submittedStart,") &&
               emitRecordBody.Contains("submittedStart = startEntity;") &&
               emitRecordBody.Contains("submittedEnd = endEntity;"),
@@ -704,7 +704,7 @@ class DeletionRegression
             "The geometry case documents that it compares both ends and still not the curve");
 
         // The cache holds the verdict taken at resume; it does not hold where the junction stands now.
-        int positionCheck = missBody.IndexOf("if (!PositionAllowsRebuild(em, rec.StartNode, rec.StartPos)", StringComparison.Ordinal);
+        int positionCheck = missBody.IndexOf("PositionAllowsRebuild(em, rec.StartNode, rec.StartPos, NetConnectivityPolicy.EndpointTolerance", StringComparison.Ordinal);
         int cacheRead = missBody.IndexOf("snap.Verdicts.TryGet(netIndex", StringComparison.Ordinal);
         Check(positionCheck >= 0 && cacheRead > positionCheck,
             "A resumed batch re-checks both junction positions before it reads the cached verdicts");
@@ -1057,6 +1057,39 @@ class DeletionRegression
         Check(!MethodBody(undoSource, "private struct UndoNetRecord", 1400).Contains("Lane lane") &&
               !MethodBody(undoSource, "private struct UndoNetRecord", 1400).Contains("m_SubLane"),
             "The segment record stores lane counts, never a lane entity that cannot outlive its road");
+
+        // --- v2.7.10 guards: buildings before road edges, skip-review direct delete, immediate interrupted continue, and post-restore refresh ---
+        string phaseBody = MethodBody(toolSource, "private int DeletionPhase(", 500);
+        Check(phaseBody.Contains("HasComponent<Edge>(item.Entity)) return 2;") && phaseBody.Contains("SelectionCategory.Area ? 3 : 1"),
+            "Batched deletion removes buildings/assets (phase 1) before road edges (phase 2)");
+        string continueBody = MethodBody(toolSource, "public void ContinueInterruptedDeletion(", 1800);
+        Check(continueBody.Contains("HasNewImportantBuilding(result, interrupted.Approved)"),
+            "Immediate interrupted continue still guards against newly entered important buildings");
+        string submitConfirmBody = MethodBody(toolSource, "private void SubmitConfirmedDeletion(", 1500);
+        Check(submitConfirmBody.Contains("bool hasNewImportant = HasNewImportantBuilding(current, reviewed);") &&
+              submitConfirmBody.Contains("bool needsReview = planNeedsReview || hasNewImportant;"),
+            "Confirm step enforces HasNewImportantBuilding even when SkipBatchRevalidation is active");
+        string discardBody = MethodBody(toolSource, "public void DiscardInterruptedDeletion(", 600);
+        Check(discardBody.Contains("\"deletion_observe_timeout\""),
+            "Discarding an interrupted deletion also clears observe timeout notices");
+        string finishBatchesBody = MethodBody(toolSource, "private void FinishDeletionBatches(", 850);
+        int nullGuardAt = finishBatchesBody.IndexOf("if (m_PendingAuditLog != null)", StringComparison.Ordinal);
+        int stateAssignAt = finishBatchesBody.IndexOf("m_PendingAuditLog.State = state;", StringComparison.Ordinal);
+        Check(nullGuardAt >= 0 && stateAssignAt > nullGuardAt,
+            "FinishDeletionBatches keeps all m_PendingAuditLog mutations inside null guard");
+        Check(toolSource.Contains("m_TaskSkipBatchRevalidation") && toolSource.Contains("SkipBatchRevalidation"),
+            "Batch loop honours the skip-review direct-delete option while preserving protected-object checks");
+        Check(MethodBody(toolSource, "private void SetPending(", 1200).Contains("ClearNonAlertFinishedNotice()"),
+            "Entering a new pending selection clears stale non-alert undo finished notices");
+        string tickUndoBody = MethodBody(toolSource, "public void TickUndo(", 1600);
+        Check(tickUndoBody.Contains("m_UndoRefreshDelayFrames") && tickUndoBody.Contains("FlushUndoConnectionRefresh("),
+            "TickUndo drives post-restore connection refresh every frame even when MarqueeDelete tool is inactive");
+        string preloadBody = MethodBody(toolSource, "protected override void OnGamePreload(", 1200);
+        Check(preloadBody.Contains("m_UndoRefreshDelayFrames = 0;") && preloadBody.Contains("m_UndoRefreshBuildingPositions.Clear()"),
+            "OnGamePreload clears pending post-restore connection refresh state across save loads");
+        string logPathBody = MethodBody(toolSource, "private static string[] GetLogCandidatePaths(", 1200);
+        Check(logPathBody.Contains("MarqueeDelete.status.log") && MethodBody(toolSource, "internal static void AppendStatusLine(", 2000).Contains("MaxStatusLogBytes"),
+            "Status logging writes to Logs/MarqueeDelete.status.log with size rotation");
 
         Console.WriteLine($"Deletion regression: {checks} passed (offline stand-ins; in-game playback still requires validation).");
     }

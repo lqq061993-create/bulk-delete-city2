@@ -347,6 +347,7 @@ namespace MarqueeDelete
             }
 
             var toUpdate = new HashSet<Entity>(protectedNodes);
+            var nodesToScan = new HashSet<Entity>(protectedNodes);
             List<Entity> submittedOrder = EntityOrder.Sorted(submitted);
             for (int i = 0; i < submittedOrder.Count; i++)
             {
@@ -356,11 +357,20 @@ namespace MarqueeDelete
                     Edge edge = em.GetComponentData<Edge>(entity);
                     toUpdate.Add(edge.m_Start);
                     toUpdate.Add(edge.m_End);
+                    nodesToScan.Add(edge.m_Start);
+                    nodesToScan.Add(edge.m_End);
+                }
+                if (em.HasComponent<Game.Net.Node>(entity))
+                {
+                    // Node-only SubNets or LocalConnect nodes may be referenced by a surviving
+                    // passing road's ConnectedNode buffer even when none of that road's edges
+                    // are in submitted. Walk ConnectedEdge so the surviving road gets Updated.
+                    nodesToScan.Add(entity);
                 }
                 if (em.HasComponent<Attached>(entity))
                     toUpdate.Add(em.GetComponentData<Attached>(entity).m_Parent);
             }
-            var neighbors = EntityOrder.Sorted(toUpdate);
+            var neighbors = EntityOrder.Sorted(nodesToScan);
             foreach (Entity node in neighbors)
             {
                 if (node == Entity.Null || !em.Exists(node) || !em.HasBuffer<ConnectedEdge>(node)) continue;
@@ -516,6 +526,10 @@ namespace MarqueeDelete
             for (int i = 0; i < submittedOrder.Count; i++)
             {
                 Entity entity = submittedOrder[i];
+                if (entity == Entity.Null || !em.Exists(entity) || em.HasComponent<Deleted>(entity))
+                {
+                    continue;
+                }
                 commands.RemoveComponent<Applied>(entity);
                 commands.RemoveComponent<Created>(entity);
                 commands.RemoveComponent<Updated>(entity);

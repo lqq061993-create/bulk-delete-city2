@@ -85,6 +85,9 @@ namespace MarqueeDelete
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.ConfirmBeforeDelete)), "Confirm Before Delete" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.ConfirmBeforeDelete)), "When ON: highlights targets first on release and requires Enter or clicking Delete to demolish. When OFF: release mouse to delete immediately without secondary confirmation even for large selections (unique/signature buildings are still safely protected)." },
 
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.SkipBatchRevalidation)), "Skip Batch Review (Direct Delete)" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.SkipBatchRevalidation)), "When ON: multi-batch demolition skips mid-way target-change/cascade re-review pauses and removes remaining items directly (map tiles, districts, and outside connections stay protected)." },
+
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.LargeSelectionThreshold)), "Large Selection Warning Threshold" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.LargeSelectionThreshold)), "Visual count threshold for displaying the large selection badge and warning pulse in the UI. (Note: when Confirm Before Delete is OFF, release deletes directly without confirmation)." },
 
@@ -93,6 +96,12 @@ namespace MarqueeDelete
 
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.PlaySounds)), "Sound Effects" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.PlaySounds)), "Play standard bulldoze and UI sound feedback when deleting targets." },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.EnablePanelGlow)), "Panel Rainbow Breathing Glow" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.EnablePanelGlow)), "Enable a multi-color gradient breathing glow across the tool panel and border (off by default)." },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.EnableUndoProgressFx)), "Undo Bar Particle Stream FX" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.EnableUndoProgressFx)), "Enable a flowing rainbow gradient with animated glowing particles on the Undo progress bar (off by default)." },
 
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.OverlayDetail)), "Overlay Detail Level" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.OverlayDetail)), "Set overlay rendering quality: Minimal (boundary & count only, zero interior primitives), Standard (compact building blocks & budget 800, recommended), or Detailed (full graphics & custom budget)." },
@@ -343,6 +352,12 @@ namespace MarqueeDelete
                 { "MarqueeDelete.DescClearAllFilters", "Disable all building zone and asset category filters so you can pick a single category cleanly." },
                 { "MarqueeDelete.ResetFiltersBtn", "Reset" },
                 { "MarqueeDelete.OptionConfirm", "Confirm" },
+                { "MarqueeDelete.OptionSkipReview", "Skip Review" },
+                { "MarqueeDelete.DescSkipReview", "Skip mid-batch target-change re-review pauses and execute batch demolition directly (map tiles, districts, and outside connections remain protected)." },
+                { "MarqueeDelete.OptionPanelGlow", "Prism Glow" },
+                { "MarqueeDelete.DescPanelGlow", "Toggle the multi-color gradient breathing glow across the panel and border (off by default)." },
+                { "MarqueeDelete.OptionUndoFx", "Undo FX" },
+                { "MarqueeDelete.DescUndoFx", "Toggle the flowing rainbow particle gradient effect on the Undo progress bar (off by default)." },
                 { "MarqueeDelete.OptionCameraAlign", "Cam Align" },
                 { "MarqueeDelete.OptionProtectOutside", "Safe Edge" },
                 { "MarqueeDelete.SelectedLabel", "Selected" },
@@ -374,10 +389,14 @@ namespace MarqueeDelete
                 { "MarqueeDelete.OptOn", "ON" },
                 { "MarqueeDelete.PreviewOnlyNotice", "Current game build is in preview mode - deletion is disabled pending write verification." },
                 { "MarqueeDelete.UndergroundBtn", "Underground" },
-                { "MarqueeDelete.InterruptedSummary", "Demolition paused. {0} recorded targets remain to review." },
+                { "MarqueeDelete.InterruptedSummary", "Demolition paused — {0} target(s) remaining." },
                 { "MarqueeDelete.ReviewingRemaining", "Review the remaining targets below. Only the targets shown below will be submitted when you confirm." },
                 { "MarqueeDelete.ReviewRemainingBtn", "Review remaining" },
+                { "MarqueeDelete.ContinueInterruptedBtn", "Delete Now ({0})" },
+                { "MarqueeDelete.KeepBuildingsBtn", "Keep Buildings" },
                 { "MarqueeDelete.DiscardRemainingBtn", "Discard remainder" },
+                { "MarqueeDelete.ConfirmSkipReviewBtn", "Delete Directly (No Review)" },
+                { "MarqueeDelete.DescConfirmSkipReviewBtn", "Execute batch deletion without pausing mid-way for target-change re-review." },
                 { "MarqueeDelete.ResumeUnavailable", "No recorded targets can be removed under the current filters and protections." },
                 { "MarqueeDelete.SelectionChanged", "The affected objects changed. Review the selection before confirming again." },
                 { "MarqueeDelete.SelectionProtected", "This selection would remove a protected object. Adjust the area or filters." },
@@ -583,6 +602,9 @@ namespace MarqueeDelete
                 { "MarqueeDelete.ColorResetBtn", "Reset Defaults" },
                 { "MarqueeDelete.ColorCloseBtn", "Close" },
                 { "MarqueeDelete.ColorEscHint", "ESC closes palette" },
+                { "MarqueeDelete.ColorPreviewLabel", "Live Preview" },
+                { "MarqueeDelete.ColorPresetActiveTag", "Active" },
+                { "MarqueeDelete.UndoScopeQuickEditHint", "Click to adjust Undo Scope in Options" },
 
                 { "MarqueeDelete.RestoreHistoryBtn", "Restore" },
                 { "MarqueeDelete.DescRestoreHistory", "Restore recent marquee boundary from history (up to 5 saved)." },
@@ -640,6 +662,9 @@ namespace MarqueeDelete
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.ConfirmBeforeDelete)), "删除前确认" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.ConfirmBeforeDelete)), "开启时：松开鼠标后先高亮预览目标，需按 Enter 或点击按钮确认后再删除。关闭时：松手即删，大选区也不二次确认（特殊/地标等重要建筑仍保留安全底线保护）。" },
 
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.SkipBatchRevalidation)), "跳过分批复核（直通删除）" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.SkipBatchRevalidation)), "开启时：大批量分批拆除过程中跳过中途变化/级联复核暂停，直接完成全部剩余目标拆除（地图边界、行政区与外部连接仍受硬保护）。" },
+
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.LargeSelectionThreshold)), "大批量警示阈值" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.LargeSelectionThreshold)), "界面大选区警示标签与视觉脉冲的数量阈值。（注意：当“删除前确认”关闭时，松手即删，大选区也不会二次确认）。" },
 
@@ -648,6 +673,12 @@ namespace MarqueeDelete
 
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.PlaySounds)), "操作音效" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.PlaySounds)), "框选确认与批量删除时播放游戏原版拆除音效。" },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.EnablePanelGlow)), "面板渐色炫彩呼吸光效" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.EnablePanelGlow)), "开启整个工具面板（含上方地下模式等原版界面）的五颜六色渐变炫彩呼吸光效（默认关闭）。" },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.EnableUndoProgressFx)), "回撤进度条流光粒子特效" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.EnableUndoProgressFx)), "开启回撤进度条的流光粒子渐变炫彩特效（默认关闭）。" },
 
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.OverlayDetail)), "覆盖层精细度" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.OverlayDetail)), "设置覆盖层渲染精细度：轻量（仅画选区外框与数字，零内部图元）、标准（建筑紧凑色块·预算 800，推荐默认）、全细节（完整效果·自定义预算）。" },
@@ -898,6 +929,12 @@ namespace MarqueeDelete
                 { "MarqueeDelete.DescClearAllFilters", "清空全部建筑分区与资产筛选开关，方便只勾选某一类目标进行清理。" },
                 { "MarqueeDelete.ResetFiltersBtn", "重置" },
                 { "MarqueeDelete.OptionConfirm", "先确认" },
+                { "MarqueeDelete.OptionSkipReview", "免复核" },
+                { "MarqueeDelete.DescSkipReview", "开启后，大批量分批拆除过程中跳过中途变化复核暂停，直接删完（地图边界、行政区与外部连接仍受保护）。" },
+                { "MarqueeDelete.OptionPanelGlow", "炫彩呼吸" },
+                { "MarqueeDelete.DescPanelGlow", "开关删除面板（含上方地下模式原版界面）的五颜六色渐色炫彩呼吸光效（默认关闭）。" },
+                { "MarqueeDelete.OptionUndoFx", "撤回流光" },
+                { "MarqueeDelete.DescUndoFx", "开关回撤进度条的流光粒子渐变炫彩特效（默认关闭）。" },
                 { "MarqueeDelete.OptionCameraAlign", "随视角" },
                 { "MarqueeDelete.OptionProtectOutside", "护边界" },
                 { "MarqueeDelete.SelectedLabel", "已框选" },
@@ -929,10 +966,14 @@ namespace MarqueeDelete
                 { "MarqueeDelete.OptOn", "开" },
                 { "MarqueeDelete.PreviewOnlyNotice", "当前游戏构建处于预览模式 — 待验证写入，拆除已禁用。" },
                 { "MarqueeDelete.UndergroundBtn", "地下视图" },
-                { "MarqueeDelete.InterruptedSummary", "拆除已暂停，已记录 {0} 个待复核目标。" },
+                { "MarqueeDelete.InterruptedSummary", "拆除已暂停，仍有 {0} 个剩余目标。" },
                 { "MarqueeDelete.ReviewingRemaining", "正在复核剩余目标。确认后将拆除下方列出的目标及其附属物。" },
                 { "MarqueeDelete.ReviewRemainingBtn", "复核剩余目标" },
+                { "MarqueeDelete.ContinueInterruptedBtn", "立即删除 ({0})" },
+                { "MarqueeDelete.KeepBuildingsBtn", "保留建筑" },
                 { "MarqueeDelete.DiscardRemainingBtn", "放弃剩余目标" },
+                { "MarqueeDelete.ConfirmSkipReviewBtn", "不复核直接删除" },
+                { "MarqueeDelete.DescConfirmSkipReviewBtn", "跳过分批拆除中途的待复核暂停，直接完成本轮选区拆除。" },
                 { "MarqueeDelete.ResumeUnavailable", "按当前筛选和保护设置，没有可继续拆除的已记录目标。" },
                 { "MarqueeDelete.SelectionChanged", "受影响对象已变化，请核对选区后重新确认。" },
                 { "MarqueeDelete.SelectionProtected", "此选区会连带删除受保护对象，请调整范围或筛选项。" },
@@ -1138,6 +1179,9 @@ namespace MarqueeDelete
                 { "MarqueeDelete.ColorResetBtn", "恢复默认" },
                 { "MarqueeDelete.ColorCloseBtn", "关闭" },
                 { "MarqueeDelete.ColorEscHint", "按 ESC 关闭配色窗口" },
+                { "MarqueeDelete.ColorPreviewLabel", "配色预览" },
+                { "MarqueeDelete.ColorPresetActiveTag", "使用中" },
+                { "MarqueeDelete.UndoScopeQuickEditHint", "点击前往「选项」调整可撤回资产范围" },
 
                 { "MarqueeDelete.RestoreHistoryBtn", "恢复选区" },
                 { "MarqueeDelete.DescRestoreHistory", "从历史记录中一键恢复最近的框选边界（最多保存5次）。" },

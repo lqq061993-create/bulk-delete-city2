@@ -293,6 +293,8 @@ namespace MarqueeDelete
             }
         }
 
+        private static readonly HashSet<Entity> s_ScratchSeen = new HashSet<Entity>();
+
         public static SelectionResult Collect(
             World world,
             EntityManager em,
@@ -320,7 +322,12 @@ namespace MarqueeDelete
                 return result;
             }
 
-            HashSet<Entity> seen = new HashSet<Entity>(result.ManuallyExcluded);
+            HashSet<Entity> seen = s_ScratchSeen;
+            seen.Clear();
+            foreach (Entity ex in result.ManuallyExcluded)
+            {
+                seen.Add(ex);
+            }
 
             bool needStaticTree = (mask & (SelectionFilterMask.Buildings |
                                            SelectionFilterMask.AllZones |
@@ -424,26 +431,33 @@ namespace MarqueeDelete
 
             var terrain = default(TerrainHeightData);
             bool hasTerrain = items.Count > 0 && (mask & SelectionFilterMask.Moving) != 0 && TryGetTerrain(world, out terrain);
-            foreach (var item in items)
+            try
             {
-                if (result.ManuallyExcluded.Contains(item.Entity) || locked.DeferredNodes?.Contains(item.Entity) == true)
-                    continue;
-
-                var snapshot = BuildSnapshot(em, item.Entity, hasTerrain, ref terrain);
-                if (SelectionClassifier.Evaluate(in snapshot, mask, in safety, underground, out var category) != FilterSkipReason.Accepted)
-                    continue;
-
-                if (!result.ManuallyAdded.Contains(item.Entity))
+                foreach (var item in items)
                 {
-                    if ((em.HasComponent<Transform>(item.Entity) || em.HasComponent<Curve>(item.Entity) ||
-                         em.HasComponent<Game.Net.Node>(item.Entity)) &&
-                        !MatchesEntityGeometry(em, item.Entity, in locked.Shape, default(QuadTreeBoundsXZ), in snapshot))
+                    if (result.ManuallyExcluded.Contains(item.Entity) || locked.DeferredNodes?.Contains(item.Entity) == true)
                         continue;
 
-                    if (em.HasComponent<Area>(item.Entity) && !MatchesAreaGeometry(em, item.Entity, in locked.Shape))
+                    var snapshot = BuildSnapshot(em, item.Entity, hasTerrain, ref terrain);
+                    if (SelectionClassifier.Evaluate(in snapshot, mask, in safety, underground, out var category) != FilterSkipReason.Accepted)
                         continue;
+
+                    if (!result.ManuallyAdded.Contains(item.Entity))
+                    {
+                        if ((em.HasComponent<Transform>(item.Entity) || em.HasComponent<Curve>(item.Entity) ||
+                             em.HasComponent<Game.Net.Node>(item.Entity)) &&
+                            !MatchesEntityGeometry(em, item.Entity, in locked.Shape, default(QuadTreeBoundsXZ), in snapshot))
+                            continue;
+
+                        if (em.HasComponent<Area>(item.Entity) && !MatchesAreaGeometry(em, item.Entity, in locked.Shape))
+                            continue;
+                    }
+                    AddItem(em, result, item.Entity, category, in snapshot);
                 }
-                AddItem(em, result, item.Entity, category, in snapshot);
+            }
+            finally
+            {
+                ReleaseTerrainReader(world, hasTerrain);
             }
             PlanWithDeferredNodes(em, result, deferredNodes);
             return result;
@@ -645,31 +659,37 @@ namespace MarqueeDelete
                 var existing = new HashSet<Entity>(next.Entities);
                 var terrain = default(TerrainHeightData);
                 bool hasTerrain = (mask & SelectionFilterMask.Moving) != 0 && TryGetTerrain(world, out terrain);
-
-                foreach (Entity entity in previous.ManuallyAdded)
+                try
                 {
-                    if (entity == Entity.Null ||
-                        next.ManuallyExcluded.Contains(entity) ||
-                        !em.Exists(entity) ||
-                        em.HasComponent<Deleted>(entity))
+                    foreach (Entity entity in previous.ManuallyAdded)
                     {
-                        continue;
-                    }
+                        if (entity == Entity.Null ||
+                            next.ManuallyExcluded.Contains(entity) ||
+                            !em.Exists(entity) ||
+                            em.HasComponent<Deleted>(entity))
+                        {
+                            continue;
+                        }
 
-                    // Always preserve manual click additions across filter/view toggles even when
-                    // currently filtered out so turning the filter back on restores them cleanly.
-                    next.ManuallyAdded.Add(entity);
+                        // Always preserve manual click additions across filter/view toggles even when
+                        // currently filtered out so turning the filter back on restores them cleanly.
+                        next.ManuallyAdded.Add(entity);
 
-                    EntityFlagsSnapshot snapshot = BuildSnapshot(em, entity, hasTerrain, ref terrain);
-                    if (SelectionClassifier.Evaluate(in snapshot, mask, in safety, underground, out SelectionCategory category) != FilterSkipReason.Accepted)
-                    {
-                        continue;
-                    }
+                        EntityFlagsSnapshot snapshot = BuildSnapshot(em, entity, hasTerrain, ref terrain);
+                        if (SelectionClassifier.Evaluate(in snapshot, mask, in safety, underground, out SelectionCategory category) != FilterSkipReason.Accepted)
+                        {
+                            continue;
+                        }
 
-                    if (existing.Add(entity))
-                    {
-                        AddItem(em, next, entity, category, in snapshot);
+                        if (existing.Add(entity))
+                        {
+                            AddItem(em, next, entity, category, in snapshot);
+                        }
                     }
+                }
+                finally
+                {
+                    ReleaseTerrainReader(world, hasTerrain);
                 }
             }
 
@@ -705,7 +725,15 @@ namespace MarqueeDelete
 
             var terrain = default(TerrainHeightData);
             bool hasTerrain = (mask & SelectionFilterMask.Moving) != 0 && TryGetTerrain(world, out terrain);
-            EntityFlagsSnapshot snapshot = BuildSnapshot(em, root, hasTerrain, ref terrain);
+            EntityFlagsSnapshot snapshot;
+            try
+            {
+                snapshot = BuildSnapshot(em, root, hasTerrain, ref terrain);
+            }
+            finally
+            {
+                ReleaseTerrainReader(world, hasTerrain);
+            }
             skipReason = SelectionClassifier.Evaluate(in snapshot, mask, in safety, underground, out SelectionCategory category);
             if (skipReason != FilterSkipReason.Accepted)
             {
@@ -989,6 +1017,12 @@ namespace MarqueeDelete
             var terrain = world.GetExistingSystemManaged<TerrainSystem>();
             data = terrain != null ? terrain.GetHeightData(false) : default(TerrainHeightData);
             return data.isCreated;
+        }
+
+        private static void ReleaseTerrainReader(World world, bool hasTerrain)
+        {
+            if (!hasTerrain || world == null) return;
+            world.GetExistingSystemManaged<TerrainSystem>()?.AddCPUHeightReader(default(JobHandle));
         }
 
         private static bool IsBuilding(EntityManager em, Entity entity) =>

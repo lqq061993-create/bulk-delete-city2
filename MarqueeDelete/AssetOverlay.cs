@@ -40,6 +40,8 @@ namespace MarqueeDelete
         private SelectionResult m_AssetOverlaySelection;
         private float m_NextAssetRefreshTime;
         private float3 m_LastAssetRefreshCamPos;
+        private float3 m_LastAssetRefreshCamFwd;
+        private bool m_HasLastAssetCamPose;
         private int m_TotalCachedAssetPrimitives;
         private int m_LastProjectedPrimitives;
 
@@ -55,6 +57,7 @@ namespace MarqueeDelete
             m_OverflowFallbackEntities.Clear();
             m_NextFallbackEntities.Clear();
             m_NextAssetRefreshTime = 0f;
+            m_HasLastAssetCamPose = false;
             m_TotalCachedAssetPrimitives = 0;
             m_LastProjectedPrimitives = 0;
         }
@@ -104,7 +107,18 @@ namespace MarqueeDelete
             if (selectionChanged || (totalExceedsBudget && now >= m_NextAssetRefreshTime))
             {
                 m_NextAssetRefreshTime = now + 0.15f;
-                return RefreshProjectedAssetBudget(Camera.main);
+                Camera cam = ResolveActiveCamera();
+                if (!selectionChanged && !HasCameraMovedSignificantly(cam, ref m_LastAssetRefreshCamPos, ref m_LastAssetRefreshCamFwd, ref m_HasLastAssetCamPose))
+                {
+                    return false;
+                }
+                if (selectionChanged && cam != null)
+                {
+                    m_LastAssetRefreshCamPos = cam.transform.position;
+                    m_LastAssetRefreshCamFwd = cam.transform.forward;
+                    m_HasLastAssetCamPose = true;
+                }
+                return RefreshProjectedAssetBudget(cam);
             }
 
             return false;

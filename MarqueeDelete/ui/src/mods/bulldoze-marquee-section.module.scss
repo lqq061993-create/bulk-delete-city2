@@ -1,3 +1,40 @@
+// Cohtml-safe design tokens (no CSS `gap`, explicit border longhand properties only)
+$surface-base: rgba(14, 20, 30, 0.94);
+$surface-card: rgba(22, 31, 46, 0.88);
+$surface-elevated: rgba(32, 45, 66, 0.94);
+$surface-inset: rgba(10, 15, 24, 0.84);
+
+$border-subtle: rgba(148, 178, 218, 0.18);
+$border-strong: rgba(148, 178, 218, 0.36);
+
+$text-primary: #f4f8ff;
+$text-secondary: rgba(214, 226, 244, 0.90);
+$text-muted: rgba(176, 198, 226, 0.76);
+
+$accent-info: #38bdf8;
+$accent-info-bg: rgba(24, 118, 186, 0.24);
+$accent-info-border: rgba(96, 198, 255, 0.62);
+
+$accent-success: #34d399;
+$accent-success-bg: rgba(16, 108, 92, 0.34);
+$accent-success-border: rgba(74, 232, 184, 0.72);
+
+$accent-warning: #fbbf24;
+$accent-warning-bg: rgba(196, 124, 16, 0.24);
+$accent-warning-border: rgba(251, 191, 36, 0.78);
+
+$accent-danger: #f87171;
+$accent-danger-bg: rgba(208, 48, 38, 0.92);
+$accent-danger-border: rgba(255, 160, 148, 0.88);
+
+$radius-sm: 4rem;
+$radius-md: 6rem;
+$radius-lg: 8rem;
+
+$btn-sm: 24rem;
+$btn-md: 28rem;
+$btn-lg: 34rem;
+
 .toolBtnRelative {
     position: relative;
 }
@@ -22,25 +59,11 @@
     pointer-events: none;
 }
 
-.zoneBarRes {
-    background-color: #22f56a;
-}
-
-.zoneBarCom {
-    background-color: #26a6ff;
-}
-
-.zoneBarInd {
-    background-color: #ffcc12;
-}
-
-.zoneBarOff {
-    background-color: #b656ff;
-}
-
-.zoneBarOther {
-    background-color: #ff7236;
-}
+.zoneBarRes { background-color: #22f56a; }
+.zoneBarCom { background-color: #26a6ff; }
+.zoneBarInd { background-color: #ffcc12; }
+.zoneBarOff { background-color: #b656ff; }
+.zoneBarOther { background-color: #ff7236; }
 
 .countBadge {
     position: absolute;
@@ -70,14 +93,54 @@
 .toolOptionsStack {
     display: flex;
     flex-direction: column;
-    max-height: 60vh;
+    max-height: 62vh;
     min-width: 0;
+}
+
+.toolOptionsStackGlow {
+    display: flex;
+    flex-direction: column;
+    max-height: 62vh;
+    min-width: 0;
+    border-radius: 10rem;
+    overflow: hidden;
+    background-color: rgba(14, 20, 34, 0.56);
+    background-image: linear-gradient(
+        135deg,
+        rgba(255, 102, 136, 0.24) 0%,
+        rgba(255, 204, 92, 0.22) 25%,
+        rgba(84, 240, 148, 0.20) 50%,
+        rgba(86, 198, 255, 0.22) 75%,
+        rgba(196, 114, 255, 0.24) 100%
+    );
+    border-width: 2.5rem;
+    border-style: solid;
+    border-top-color: rgba(255, 116, 148, 0.90);
+    border-right-color: rgba(255, 214, 102, 0.90);
+    border-bottom-color: rgba(96, 238, 178, 0.90);
+    border-left-color: rgba(164, 134, 255, 0.90);
+    box-shadow: 0 0 20rem rgba(255, 128, 180, 0.42), 0 0 38rem rgba(96, 212, 255, 0.30), inset 0 0 22rem rgba(180, 232, 255, 0.20);
 }
 
 .originalToolOptions {
     flex: 0 0 auto;
-    max-height: 22vh;
+    max-height: 20vh;
     overflow-y: auto;
+}
+
+.originalToolOptionsGlow {
+    flex: 0 0 auto;
+    max-height: 20vh;
+    overflow-y: auto;
+    background-color: rgba(16, 24, 40, 0.42);
+    background-image: linear-gradient(
+        180deg,
+        rgba(148, 196, 255, 0.16) 0%,
+        rgba(192, 162, 255, 0.10) 100%
+    );
+    border-bottom-width: 1rem;
+    border-bottom-style: solid;
+    border-bottom-color: rgba(186, 206, 255, 0.32);
 }
 
 .marqueePanel {
@@ -87,10 +150,106 @@
     min-height: 0;
     flex: 0 1 auto;
     overflow: hidden;
+    background-color: rgba(14, 20, 30, 0.46);
+    border-top-width: 1rem;
+    border-top-style: solid;
+    border-top-color: $border-subtle;
+}
+
+.marqueePanelGlow {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+    background-color: rgba(14, 20, 34, 0.34);
+    background-image: linear-gradient(
+        160deg,
+        rgba(255, 118, 156, 0.11) 0%,
+        rgba(255, 212, 108, 0.09) 28%,
+        rgba(92, 236, 168, 0.09) 56%,
+        rgba(98, 196, 255, 0.11) 80%,
+        rgba(198, 126, 255, 0.11) 100%
+    );
+}
+
+.geminiTopGlow {
+    width: 100%;
+    height: 4rem;
+    flex-shrink: 0;
+    background-color: #93c5fd;
+    background-image: linear-gradient(
+        90deg,
+        rgba(255, 104, 138, 0.98) 0%,
+        rgba(255, 202, 88, 0.98) 20%,
+        rgba(86, 238, 152, 0.98) 42%,
+        rgba(78, 206, 255, 0.98) 64%,
+        rgba(164, 124, 255, 0.98) 84%,
+        rgba(255, 114, 192, 0.98) 100%
+    );
+    box-shadow: 0 1rem 14rem rgba(124, 210, 255, 0.72);
+}
+
+.geminiBottomGlow {
+    width: 100%;
+    height: 3rem;
+    flex-shrink: 0;
+    background-color: #c4b5fd;
+    background-image: linear-gradient(
+        90deg,
+        rgba(255, 114, 192, 0.96) 0%,
+        rgba(164, 124, 255, 0.98) 22%,
+        rgba(78, 206, 255, 0.98) 46%,
+        rgba(86, 238, 152, 0.98) 68%,
+        rgba(255, 202, 88, 0.98) 86%,
+        rgba(255, 104, 138, 0.96) 100%
+    );
+    box-shadow: 0 -1rem 12rem rgba(180, 160, 255, 0.62);
 }
 
 .panelHeader {
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 6rem 12rem 0 12rem;
+    background-color: rgba(16, 23, 36, 0.68);
+    border-bottom-width: 1rem;
+    border-bottom-style: solid;
+    border-bottom-color: $border-subtle;
+}
+
+.headerTopRow {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 5rem;
+}
+
+.headerLeftGroup {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.headerLeftGroup > * {
+    margin-right: 6rem;
+}
+
+.headerRightGroup {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+.headerRightGroup > * {
+    margin-left: 4rem;
 }
 
 .panelBody {
@@ -101,43 +260,68 @@
     min-width: 0;
     overflow-x: hidden;
     overflow-y: auto;
+    padding-top: 2rem;
+    padding-bottom: 4rem;
 }
 
 .panelBody > * {
     flex-shrink: 0;
 }
 
+.panelFooter {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 6rem 12rem 7rem 12rem;
+    background-color: rgba(12, 18, 28, 0.74);
+    border-top-width: 1rem;
+    border-top-style: solid;
+    border-top-color: $border-strong;
+}
+
 .panelSection {
     display: flex;
+    flex-direction: column;
+    padding: 5rem 12rem;
+    border-bottom-width: 1rem;
+    border-bottom-style: solid;
+    border-bottom-color: rgba(148, 178, 218, 0.1);
+}
+
+.sectionHeaderRow {
+    display: flex;
     flex-direction: row;
-    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    padding: 4rem 12rem;
+    margin-bottom: 4rem;
 }
 
 .sectionTitle {
-    font-size: var(--fontSizeM, 12rem);
+    font-size: var(--fontSizeM, 11.5rem);
     font-weight: 700;
-    color: #e1ebf6;
-    margin-right: 8rem;
-    max-width: 100%;
+    color: $text-primary;
+    letter-spacing: 0.2rem;
+}
+
+.sectionHeaderAccessory {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
 }
 
 .sectionControls {
     display: flex;
     flex-direction: row;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     flex-wrap: wrap;
-    flex: 0 1 auto;
     min-width: 0;
     max-width: 100%;
-    margin-left: auto;
 }
 
 .sectionControls > * {
-    margin: 2rem 0 2rem 4rem;
+    margin: 2rem 4rem 2rem 0;
 }
 
 .tooltipContainer {
@@ -162,11 +346,6 @@
 .activeFooter {
     display: flex;
     flex-direction: column;
-    margin: 2rem 12rem 4rem 12rem;
-    padding-top: 6rem;
-    border-top-width: 1rem;
-    border-top-style: solid;
-    border-top-color: rgba(255, 255, 255, 0.14);
 }
 
 .idleBar {
@@ -175,19 +354,19 @@
     align-items: center;
     flex-wrap: wrap;
     justify-content: space-between;
-    padding: 2rem;
+    padding: 2rem 0;
 }
 
 .layerBadge {
     display: flex;
     flex-direction: row;
     align-items: center;
-    padding: 2rem 7rem;
-    border-radius: 4rem;
-    background-color: rgba(32, 146, 214, 0.24);
+    padding: 2.5rem 8rem;
+    border-radius: $radius-sm;
+    background-color: $accent-info-bg;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(88, 198, 255, 0.55);
+    border-color: $accent-info-border;
     color: #e8f6ff;
     font-size: 10rem;
     font-weight: 700;
@@ -198,12 +377,12 @@
     display: flex;
     flex-direction: row;
     align-items: center;
-    padding: 2rem 7rem;
-    border-radius: 4rem;
-    background-color: rgba(24, 168, 184, 0.28);
+    padding: 2.5rem 8rem;
+    border-radius: $radius-sm;
+    background-color: rgba(20, 152, 174, 0.28);
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(76, 230, 245, 0.65);
+    border-color: rgba(76, 230, 245, 0.68);
     color: #dffcff;
     font-size: 10rem;
     font-weight: 700;
@@ -239,7 +418,7 @@
 
 .compactHint {
     font-size: 10rem;
-    color: rgba(196, 210, 228, 0.78);
+    color: $text-muted;
     flex-shrink: 1;
     min-width: 0;
     max-width: 100%;
@@ -276,12 +455,12 @@
 
 .dimensionPill {
     margin-left: 6rem;
-    padding: 1rem 6rem;
-    border-radius: 3rem;
-    background-color: rgba(34, 152, 224, 0.26);
+    padding: 1.5rem 7rem;
+    border-radius: $radius-sm;
+    background-color: rgba(30, 146, 224, 0.28);
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(102, 206, 255, 0.65);
+    border-color: rgba(102, 206, 255, 0.72);
     color: #dff6ff;
     font-size: 10rem;
     font-weight: 700;
@@ -291,22 +470,22 @@
 
 .cascadePill {
     margin-left: 6rem;
-    padding: 1rem 5rem;
-    border-radius: 3rem;
+    padding: 1.5rem 6rem;
+    border-radius: $radius-sm;
     background-color: rgba(255, 255, 255, 0.1);
-    color: rgba(216, 228, 244, 0.88);
+    color: rgba(216, 228, 244, 0.9);
     font-size: 10rem;
     white-space: nowrap;
     flex-shrink: 0;
 }
 
 .warnPill {
-    padding: 1rem 6rem;
-    border-radius: 3rem;
-    background-color: rgba(224, 126, 28, 0.28);
+    padding: 1.5rem 7rem;
+    border-radius: $radius-sm;
+    background-color: $accent-warning-bg;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 184, 92, 0.78);
+    border-color: $accent-warning-border;
     color: #ffe2b8;
     font-size: 10rem;
     font-weight: 700;
@@ -330,59 +509,20 @@
     margin-right: 4rem;
     margin-bottom: 3rem;
     border-radius: 3rem;
-    background-color: rgba(24, 30, 40, 0.82);
+    background-color: $surface-card;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 255, 255, 0.16);
-    color: rgba(226, 236, 248, 0.94);
+    border-color: $border-subtle;
+    color: $text-secondary;
     font-size: 10rem;
     white-space: nowrap;
 }
 
-.tagDotRes {
-    width: 6rem;
-    height: 6rem;
-    border-radius: 3rem;
-    background-color: #22f56a;
-    margin-right: 4rem;
-    flex-shrink: 0;
-}
-
-.tagDotCom {
-    width: 6rem;
-    height: 6rem;
-    border-radius: 3rem;
-    background-color: #26a6ff;
-    margin-right: 4rem;
-    flex-shrink: 0;
-}
-
-.tagDotInd {
-    width: 6rem;
-    height: 6rem;
-    border-radius: 3rem;
-    background-color: #ffcc12;
-    margin-right: 4rem;
-    flex-shrink: 0;
-}
-
-.tagDotOff {
-    width: 6rem;
-    height: 6rem;
-    border-radius: 3rem;
-    background-color: #b656ff;
-    margin-right: 4rem;
-    flex-shrink: 0;
-}
-
-.tagDotOther {
-    width: 6rem;
-    height: 6rem;
-    border-radius: 3rem;
-    background-color: #ff7236;
-    margin-right: 4rem;
-    flex-shrink: 0;
-}
+.tagDotRes { width: 6rem; height: 6rem; border-radius: 3rem; background-color: #22f56a; margin-right: 4rem; flex-shrink: 0; }
+.tagDotCom { width: 6rem; height: 6rem; border-radius: 3rem; background-color: #26a6ff; margin-right: 4rem; flex-shrink: 0; }
+.tagDotInd { width: 6rem; height: 6rem; border-radius: 3rem; background-color: #ffcc12; margin-right: 4rem; flex-shrink: 0; }
+.tagDotOff { width: 6rem; height: 6rem; border-radius: 3rem; background-color: #b656ff; margin-right: 4rem; flex-shrink: 0; }
+.tagDotOther { width: 6rem; height: 6rem; border-radius: 3rem; background-color: #ff7236; margin-right: 4rem; flex-shrink: 0; }
 
 .breakdownTagCount {
     margin-left: 4rem;
@@ -395,13 +535,15 @@
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    padding: 3rem 8rem;
+    padding: 4rem 8rem;
     margin-bottom: 5rem;
-    border-radius: 4rem;
-    background-color: rgba(218, 134, 18, 0.26);
+    border-radius: $radius-sm;
+    background-color: $accent-warning-bg;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 198, 68, 0.88);
+    border-color: $accent-warning-border;
+    border-left-width: 3rem;
+    border-left-color: $accent-warning;
     color: #ffeab3;
     font-size: 10rem;
     font-weight: 700;
@@ -410,23 +552,150 @@
 .interruptedCard {
     display: flex;
     flex-direction: column;
-    padding: 6rem 8rem 2rem;
+    padding: 7rem 9rem 5rem 9rem;
     margin-bottom: 5rem;
-    border: 1rem solid rgba(255, 194, 106, 0.55);
-    border-radius: 5rem;
-    background-color: rgba(75, 52, 28, 0.82);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $accent-warning-border;
+    border-left-width: 3rem;
+    border-left-color: $accent-warning;
+    border-radius: $radius-md;
+    background-color: rgba(68, 46, 22, 0.88);
     color: #ffe4c2;
-    font-size: 11rem;
+    font-size: 10.5rem;
+}
+
+.interruptedSummaryText {
+    font-weight: 700;
+    color: #fff0d6;
+    line-height: 1.35;
 }
 
 .interruptedUnits {
     margin-top: 2rem;
-    margin-bottom: 2rem;
+    margin-bottom: 3rem;
+    font-size: 10rem;
+    color: rgba(255, 224, 178, 0.88);
+}
+
+.continueDeleteBtn {
+    min-height: $btn-md;
+    padding: 4rem 11rem;
+    border-radius: $radius-sm;
+    background-color: rgba(214, 54, 44, 0.94);
+    background-image: linear-gradient(180deg, rgba(236, 78, 64, 0.96), rgba(182, 36, 28, 0.96));
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 168, 158, 0.88);
+    color: #ffffff;
+    font-size: 10.5rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.continueDeleteBtn:hover {
+    background-color: rgba(238, 72, 60, 1);
+    border-color: #ffe2dc;
+}
+
+.keepBuildingsBtn {
+    min-height: $btn-md;
+    padding: 4rem 11rem;
+    border-radius: $radius-sm;
+    background-color: rgba(34, 52, 74, 0.92);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(154, 206, 255, 0.56);
+    color: #e6f3ff;
+    font-size: 10.5rem;
+    font-weight: 600;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.keepBuildingsBtn:hover {
+    background-color: rgba(46, 72, 102, 0.98);
+    border-color: rgba(188, 228, 255, 0.92);
+    color: #ffffff;
 }
 
 .primaryAction {
     display: flex;
+    flex-direction: column;
     margin-top: 3rem;
+}
+
+.primaryConfirmGroup {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+}
+
+.skipReviewBtn {
+    width: 100%;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    min-height: 24rem;
+    margin-top: 4rem;
+    padding: 4rem 10rem;
+    border-radius: $radius-sm;
+    background-color: rgba(158, 72, 24, 0.88);
+    background-image: linear-gradient(90deg, rgba(196, 86, 30, 0.92), rgba(164, 52, 48, 0.92));
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 190, 128, 0.72);
+    color: #fff4e6;
+    font-size: 10.5rem;
+    font-weight: 700;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.skipReviewBtn:hover {
+    background-color: rgba(192, 88, 28, 0.98);
+    background-image: linear-gradient(90deg, rgba(220, 102, 36, 0.98), rgba(190, 62, 56, 0.98));
+    border-color: #ffe3be;
+    color: #ffffff;
+}
+
+.inlineBtnIcon {
+    width: 12rem;
+    height: 12rem;
+    margin-right: 4rem;
+    flex-shrink: 0;
+}
+
+.inlineBtnIconSm {
+    width: 10rem;
+    height: 10rem;
+    margin-left: 4rem;
+    flex-shrink: 0;
+}
+
+.inlineWarnIcon {
+    width: 12rem;
+    height: 12rem;
+    margin-right: 4rem;
+    flex-shrink: 0;
+}
+
+.inlineIconText {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
 }
 
 .actionsRow {
@@ -435,7 +704,7 @@
     align-items: center;
     flex-wrap: wrap;
     justify-content: flex-start;
-    margin-top: 4rem;
+    margin-top: 5rem;
 }
 
 .actionsRow > * {
@@ -447,16 +716,16 @@
     width: 100%;
     box-sizing: border-box;
     flex-shrink: 0;
-    min-height: 28rem;
-    padding: 4rem 10rem;
-    border-radius: 4rem;
-    background-color: rgba(208, 48, 38, 0.94);
-    background-image: linear-gradient(180deg, rgba(232, 72, 58, 0.96), rgba(178, 34, 26, 0.96));
+    min-height: $btn-lg;
+    padding: 5rem 12rem;
+    border-radius: $radius-md;
+    background-color: $accent-danger-bg;
+    background-image: linear-gradient(180deg, rgba(238, 76, 62, 0.98), rgba(176, 32, 24, 0.98));
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 158, 146, 0.88);
+    border-color: $accent-danger-border;
     color: #ffffff;
-    font-size: 11rem;
+    font-size: 11.5rem;
     font-weight: 700;
     display: flex;
     flex-direction: row;
@@ -468,22 +737,32 @@
 }
 
 .confirmBtn:hover {
-    background-color: rgba(236, 66, 54, 1);
-    background-image: linear-gradient(180deg, rgba(248, 88, 72, 1), rgba(198, 44, 34, 1));
-    border-color: rgba(255, 200, 192, 1);
+    background-color: rgba(240, 68, 56, 1);
+    background-image: linear-gradient(180deg, rgba(250, 92, 76, 1), rgba(196, 40, 30, 1));
+    border-color: #ffe0db;
+}
+
+.confirmBtnPreviewOnly {
+    background-color: rgba(55, 60, 70, 0.92);
+    background-image: none;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 184, 58, 0.6);
+    color: #ffda88;
+    cursor: not-allowed;
 }
 
 .secondaryBtn {
-    min-height: 28rem;
+    min-height: $btn-md;
     max-width: 100%;
     padding: 4rem 9rem;
-    border-radius: 4rem;
-    background-color: rgba(34, 39, 48, 0.92);
+    border-radius: $radius-sm;
+    background-color: $surface-card;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 255, 255, 0.2);
-    color: rgba(236, 242, 250, 0.94);
-    font-size: 11rem;
+    border-color: $border-subtle;
+    color: $text-secondary;
+    font-size: 10.5rem;
     font-weight: 600;
     display: flex;
     flex-direction: row;
@@ -496,8 +775,8 @@
 }
 
 .secondaryBtn:hover {
-    background-color: rgba(54, 62, 76, 0.98);
-    border-color: rgba(255, 255, 255, 0.38);
+    background-color: $surface-elevated;
+    border-color: $border-strong;
     color: #ffffff;
 }
 
@@ -511,26 +790,7 @@
     pointer-events: none;
 }
 
-.edgeDimTag {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    padding: 3rem 8rem;
-    border-radius: 4rem;
-    background-color: rgba(18, 22, 30, 0.92);
-    border-width: 1rem;
-    border-style: solid;
-    border-color: rgba(255, 112, 92, 0.92);
-    color: #ffffff;
-    font-size: 11rem;
-    font-weight: 700;
-    white-space: nowrap;
-}
-
+.edgeDimTag,
 .edgeDimTagUnderground {
     position: absolute;
     transform: translate(-50%, -50%);
@@ -540,15 +800,24 @@
     align-items: center;
     justify-content: center;
     padding: 3rem 8rem;
-    border-radius: 4rem;
-    background-color: rgba(14, 26, 34, 0.92);
+    border-radius: $radius-sm;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(68, 228, 245, 0.92);
-    color: #e6fcff;
     font-size: 11rem;
     font-weight: 700;
     white-space: nowrap;
+}
+
+.edgeDimTag {
+    background-color: rgba(18, 22, 30, 0.92);
+    border-color: rgba(255, 112, 92, 0.92);
+    color: #ffffff;
+}
+
+.edgeDimTagUnderground {
+    background-color: rgba(14, 26, 34, 0.92);
+    border-color: rgba(68, 228, 245, 0.92);
+    color: #e6fcff;
 }
 
 .edgeDimMeters {
@@ -574,7 +843,7 @@
     right: 0;
     bottom: 0;
     z-index: 9999;
-    background-color: rgba(8, 12, 18, 0.68);
+    background-color: rgba(8, 12, 18, 0.72);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -588,19 +857,19 @@
     z-index: 10000;
     box-sizing: border-box;
     width: 100%;
-    max-width: 480rem;
+    max-width: 500rem;
     max-height: 80vh !important;
     overflow-y: auto;
-    border-radius: 8rem;
-    background-color: rgba(22, 28, 38, 0.98);
+    border-radius: $radius-lg;
+    background-color: $surface-base;
     border-width: 2rem;
     border-style: solid;
-    border-color: rgba(255, 184, 58, 0.88);
+    border-color: $accent-warning-border;
     padding: 14rem 16rem;
     display: flex;
     flex-direction: column;
-    color: #ffffff;
-    box-shadow: 0 12rem 36rem rgba(0, 0, 0, 0.7);
+    color: $text-primary;
+    box-shadow: 0 12rem 36rem rgba(0, 0, 0, 0.74);
 }
 
 .modalHeader {
@@ -612,9 +881,12 @@
 }
 
 .modalWarnBadge {
-    padding: 2rem 7rem;
-    border-radius: 4rem;
-    background-color: rgba(235, 146, 22, 0.32);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 2.5rem 8rem;
+    border-radius: $radius-sm;
+    background-color: rgba(235, 146, 22, 0.3);
     border-width: 1rem;
     border-style: solid;
     border-color: rgba(255, 202, 82, 0.9);
@@ -626,14 +898,14 @@
 }
 
 .modalTitle {
-    font-size: 14rem;
+    font-size: 14.5rem;
     font-weight: 700;
     color: #ffffff;
 }
 
 .modalSubtitle {
     font-size: 11rem;
-    color: rgba(212, 224, 240, 0.9);
+    color: $text-secondary;
     margin-bottom: 10rem;
 }
 
@@ -644,67 +916,121 @@
     margin-bottom: 8rem;
 }
 
-.modalStatPill {
-    padding: 3rem 8rem;
+.modalStatPill,
+.modalStatPillService,
+.modalStatPillUnique,
+.modalStatPillSignature {
+    padding: 3rem 9rem;
     margin-right: 6rem;
     margin-bottom: 4rem;
-    border-radius: 4rem;
-    background-color: rgba(38, 48, 64, 0.92);
+    border-radius: $radius-sm;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 255, 255, 0.18);
-    font-size: 11rem;
+    font-size: 10.5rem;
     font-weight: 700;
-    color: #ffd875;
     white-space: nowrap;
 }
 
+.modalStatPill {
+    background-color: $surface-elevated;
+    border-color: $border-subtle;
+    color: #ffd875;
+}
+
+.modalStatPillService {
+    background-color: rgba(218, 134, 18, 0.24);
+    border-color: rgba(251, 191, 36, 0.76);
+    color: #fde68a;
+}
+
+.modalStatPillUnique {
+    background-color: rgba(142, 74, 214, 0.26);
+    border-color: rgba(196, 142, 255, 0.76);
+    color: #e9d5ff;
+}
+
+.modalStatPillSignature {
+    background-color: rgba(20, 142, 194, 0.26);
+    border-color: rgba(96, 210, 255, 0.8);
+    color: #bae6fd;
+}
+
 .modalListBox {
-    max-height: 170rem;
+    max-height: 185rem;
     min-height: 36rem;
     flex-shrink: 1;
     overflow-y: auto;
-    padding: 6rem 8rem;
+    padding: 4rem 6rem;
     margin-bottom: 12rem;
-    border-radius: 5rem;
-    background-color: rgba(12, 16, 24, 0.88);
+    border-radius: $radius-md;
+    background-color: $surface-inset;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 255, 255, 0.14);
+    border-color: $border-subtle;
     display: flex;
     flex-direction: column;
 }
 
-.modalListItem {
+.modalListItem,
+.modalListItemAlt {
     display: flex;
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    padding: 4rem 4rem;
+    padding: 5rem 6rem;
+    border-radius: 3rem;
     border-bottom-width: 1rem;
     border-bottom-style: solid;
-    border-bottom-color: rgba(255, 255, 255, 0.07);
+    border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.modalListItemAlt {
+    background-color: rgba(255, 255, 255, 0.035);
 }
 
 .modalItemName {
     font-size: 11rem;
     font-weight: 600;
-    color: #f0f6ff;
+    color: $text-primary;
     margin-right: 8rem;
 }
 
-.modalItemKind {
-    padding: 1rem 6rem;
+.modalItemKind,
+.modalItemKindService,
+.modalItemKindUnique,
+.modalItemKindSignature {
+    padding: 1.5rem 7rem;
     border-radius: 3rem;
-    background-color: rgba(224, 62, 92, 0.28);
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 128, 152, 0.78);
-    color: #ffc2ce;
-    font-size: 10rem;
+    font-size: 9.5rem;
     font-weight: 700;
     white-space: nowrap;
     flex-shrink: 0;
+}
+
+.modalItemKind {
+    background-color: rgba(224, 62, 92, 0.28);
+    border-color: rgba(255, 128, 152, 0.78);
+    color: #ffc2ce;
+}
+
+.modalItemKindService {
+    background-color: rgba(218, 134, 18, 0.26);
+    border-color: rgba(251, 191, 36, 0.8);
+    color: #fde68a;
+}
+
+.modalItemKindUnique {
+    background-color: rgba(142, 74, 214, 0.28);
+    border-color: rgba(196, 142, 255, 0.8);
+    color: #e9d5ff;
+}
+
+.modalItemKindSignature {
+    background-color: rgba(20, 142, 194, 0.28);
+    border-color: rgba(96, 210, 255, 0.85);
+    color: #bae6fd;
 }
 
 .modalActions {
@@ -716,23 +1042,26 @@
     justify-content: flex-end;
     padding-top: 8rem;
     margin-top: 4rem;
+    border-top-width: 1rem;
+    border-top-style: solid;
+    border-top-color: $border-subtle;
 }
 
 .modalActions > * {
-    margin: 0 0 4rem 4rem;
+    margin: 0 0 4rem 6rem;
 }
 
 .modalCancelBtn,
 .modalExcludeBtn,
 .modalDangerBtn {
-    min-height: 30rem;
+    min-height: $btn-lg;
     max-width: 100%;
-    padding: 4rem 12rem;
+    padding: 5rem 12rem;
     white-space: normal;
 }
 
 .modalCancelBtn {
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(44, 52, 66, 0.95);
     border-width: 1rem;
     border-style: solid;
@@ -748,14 +1077,14 @@
 }
 
 .modalExcludeBtn {
-    margin-right: 8rem;
-    border-radius: 4rem;
-    background-color: rgba(24, 118, 186, 0.92);
+    border-radius: $radius-sm;
+    background-color: rgba(18, 128, 198, 0.96);
+    background-image: linear-gradient(180deg, rgba(32, 152, 232, 0.98), rgba(16, 112, 178, 0.98));
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(132, 214, 255, 0.88);
+    border-color: rgba(146, 224, 255, 0.96);
     color: #ffffff;
-    font-size: 11rem;
+    font-size: 11.5rem;
     font-weight: 700;
     display: flex;
     flex-direction: row;
@@ -765,12 +1094,12 @@
 }
 
 .modalExcludeBtn:hover {
-    background-color: rgba(34, 144, 224, 0.98);
-    border-color: rgba(186, 232, 255, 1);
+    background-color: rgba(38, 158, 240, 1);
+    border-color: #ffffff;
 }
 
 .modalDangerBtn {
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(214, 42, 34, 0.96);
     background-image: linear-gradient(180deg, rgba(242, 74, 60, 0.98), rgba(182, 28, 22, 0.98));
     border-width: 1rem;
@@ -800,53 +1129,28 @@
     align-items: center;
     padding: 4rem 8rem;
     margin-bottom: 5rem;
-    border-radius: 4rem;
-    background-color: rgba(34, 134, 198, 0.2);
+    border-radius: $radius-sm;
+    background-color: $accent-info-bg;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(102, 206, 255, 0.56);
+    border-color: $accent-info-border;
+    border-left-width: 3rem;
+    border-left-color: $accent-info;
     color: #dff4ff;
     font-size: 10rem;
     font-weight: 600;
 }
 
-.undoBadge {
-    position: absolute;
-    top: -3rem;
-    right: -3rem;
-    min-width: 14rem;
-    height: 13rem;
-    padding: 0 3rem;
-    border-radius: 6rem;
-    background-color: rgba(34, 146, 224, 0.96);
-    border-width: 1rem;
-    border-style: solid;
-    border-color: rgba(194, 234, 255, 0.92);
-    color: #ffffff;
-    font-size: 9rem;
-    font-weight: 700;
-    line-height: 1;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-    flex-shrink: 0;
-    white-space: nowrap;
-}
-
+.undoBadge,
 .undoActiveBadge {
     position: absolute;
     top: -3rem;
     right: -3rem;
-    min-width: 16rem;
     height: 13rem;
     padding: 0 3rem;
     border-radius: 6rem;
-    background-color: rgba(24, 178, 132, 0.96);
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(196, 255, 232, 0.95);
     color: #ffffff;
     font-size: 9rem;
     font-weight: 700;
@@ -860,17 +1164,28 @@
     white-space: nowrap;
 }
 
+.undoBadge {
+    min-width: 14rem;
+    background-color: rgba(34, 146, 224, 0.96);
+    border-color: rgba(194, 234, 255, 0.92);
+}
+
+.undoActiveBadge {
+    min-width: 16rem;
+    background-color: rgba(24, 178, 132, 0.96);
+    border-color: rgba(196, 255, 232, 0.95);
+}
+
 .undoBtn {
-    height: 28rem;
-    margin-left: 5rem;
+    height: $btn-md;
     padding: 0 9rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(24, 92, 148, 0.9);
     border-width: 1rem;
     border-style: solid;
     border-color: rgba(112, 206, 255, 0.72);
     color: #eaf7ff;
-    font-size: 11rem;
+    font-size: 10.5rem;
     font-weight: 700;
     display: flex;
     flex-direction: row;
@@ -894,10 +1209,15 @@
     margin-top: 4rem;
 }
 
+.undoQuickRow > * {
+    margin-left: 4rem;
+    margin-bottom: 2rem;
+}
+
 .undoQuickBtn {
-    height: 22rem;
+    height: $btn-sm;
     padding: 0 9rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(24, 92, 148, 0.88);
     border-width: 1rem;
     border-style: solid;
@@ -918,17 +1238,15 @@
     border-color: rgba(168, 228, 255, 0.95);
 }
 
-.undoBtnDisabled {
-    height: 28rem;
-    margin-left: 5rem;
+.undoBtnDisabled,
+.undoQuickBtnDisabled {
     padding: 0 9rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(45, 52, 64, 0.75);
     border-width: 1rem;
     border-style: solid;
     border-color: rgba(255, 255, 255, 0.18);
     color: rgba(180, 195, 210, 0.55);
-    font-size: 11rem;
     font-weight: 700;
     display: flex;
     flex-direction: row;
@@ -938,35 +1256,79 @@
     white-space: nowrap;
 }
 
+.undoBtnDisabled {
+    height: $btn-md;
+    font-size: 10.5rem;
+}
+
 .undoQuickBtnDisabled {
-    height: 22rem;
-    padding: 0 9rem;
-    border-radius: 4rem;
-    background-color: rgba(45, 52, 64, 0.75);
-    border-width: 1rem;
-    border-style: solid;
-    border-color: rgba(255, 255, 255, 0.18);
-    color: rgba(180, 195, 210, 0.55);
+    height: $btn-sm;
     font-size: 10rem;
-    font-weight: 700;
+}
+
+.undoScopeSummaryBar {
     display: flex;
     flex-direction: row;
     align-items: center;
-    justify-content: center;
-    cursor: not-allowed;
+    justify-content: space-between;
+    padding: 3rem 7rem;
+    margin-bottom: 5rem;
+    border-radius: $radius-sm;
+    background-color: rgba(18, 28, 44, 0.84);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-subtle;
+    cursor: pointer;
+}
+
+.undoScopeSummaryBar:hover {
+    background-color: rgba(28, 44, 68, 0.92);
+    border-color: $accent-info-border;
+}
+
+.undoScopeSummaryLabel {
+    font-size: 9.5rem;
+    font-weight: 700;
+    color: $text-muted;
+    margin-right: 6rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.undoScopeSummaryChips {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+}
+
+.undoScopeMiniChip {
+    padding: 1rem 5rem;
+    margin-right: 3rem;
+    margin-bottom: 1rem;
+    border-radius: 3rem;
+    background-color: rgba(30, 86, 134, 0.55);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(102, 196, 255, 0.45);
+    color: #d6f0ff;
+    font-size: 9rem;
+    font-weight: 600;
     white-space: nowrap;
 }
 
 .undoProgressBox {
     display: flex;
     flex-direction: column;
-    padding: 5rem 8rem;
+    padding: 6rem 8rem;
     margin-bottom: 5rem;
-    border-radius: 4rem;
-    background-color: rgba(18, 66, 108, 0.56);
+    border-radius: $radius-md;
+    background-color: rgba(16, 56, 94, 0.62);
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(94, 198, 255, 0.66);
+    border-color: rgba(94, 198, 255, 0.72);
 }
 
 .undoProgressTop {
@@ -984,6 +1346,16 @@
     white-space: nowrap;
 }
 
+.undoProgressPct {
+    margin-left: 5rem;
+    padding: 1rem 5rem;
+    border-radius: 3rem;
+    background-color: rgba(24, 148, 212, 0.36);
+    color: #b8ecff;
+    font-size: 9.5rem;
+    font-weight: 700;
+}
+
 .undoProgressActions {
     display: flex;
     flex-direction: row;
@@ -992,14 +1364,14 @@
     margin-left: 8rem;
 }
 
-.undoPauseBtn {
-    height: 20rem;
+.undoPauseBtn,
+.undoStopBtn,
+.undoResumeBtn {
+    height: 21rem;
     padding: 0 8rem;
     border-radius: 3rem;
-    background-color: rgba(168, 114, 24, 0.9);
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 206, 110, 0.85);
     color: #ffffff;
     font-size: 10rem;
     font-weight: 700;
@@ -1010,6 +1382,11 @@
     cursor: pointer;
     flex-shrink: 0;
     white-space: nowrap;
+}
+
+.undoPauseBtn {
+    background-color: rgba(168, 114, 24, 0.9);
+    border-color: rgba(255, 206, 110, 0.85);
 }
 
 .undoPauseBtn:hover {
@@ -1018,24 +1395,9 @@
 }
 
 .undoStopBtn {
-    height: 20rem;
-    padding: 0 8rem;
     margin-left: 4rem;
-    border-radius: 3rem;
     background-color: rgba(154, 64, 58, 0.9);
-    border-width: 1rem;
-    border-style: solid;
     border-color: rgba(242, 168, 160, 0.82);
-    color: #ffffff;
-    font-size: 10rem;
-    font-weight: 700;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    flex-shrink: 0;
-    white-space: nowrap;
 }
 
 .undoStopBtn:hover {
@@ -1043,19 +1405,124 @@
     border-color: rgba(255, 204, 198, 1);
 }
 
-.undoProgressTrack {
+.undoResumeBtn {
+    background-color: rgba(24, 118, 186, 0.92);
+    border-color: rgba(132, 214, 255, 0.88);
+}
+
+.undoResumeBtn:hover {
+    background-color: rgba(34, 144, 224, 0.98);
+    border-color: rgba(186, 232, 255, 1);
+}
+
+.undoProgressTrack,
+.undoProgressTrackPlain {
+    position: relative;
     width: 100%;
-    height: 5rem;
-    border-radius: 3rem;
-    background-color: rgba(10, 20, 34, 0.78);
+    height: 22rem;
+    margin-top: 4rem;
+    padding: 2.5rem;
+    box-sizing: border-box;
+    border-radius: 999rem;
+    background-color: rgba(8, 15, 28, 0.92);
+    border-width: 1.5rem;
+    border-style: solid;
     overflow: hidden;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.undoProgressTrack {
+    border-color: rgba(174, 206, 255, 0.74);
+    box-shadow: inset 0 2rem 5rem rgba(0, 0, 0, 0.62), 0 0 14rem rgba(164, 152, 255, 0.42);
+}
+
+.undoProgressTrackPlain {
+    border-color: rgba(110, 168, 224, 0.42);
+    box-shadow: inset 0 2rem 4rem rgba(0, 0, 0, 0.5);
+}
+
+.undoProgressFill,
+.undoProgressFillPlain {
+    position: relative;
+    height: 100%;
+    border-radius: 999rem;
+    overflow: hidden;
+    transition: width 160ms ease-out;
 }
 
 .undoProgressFill {
-    height: 100%;
-    border-radius: 3rem;
-    background-color: #3cc8ff;
-    background-image: linear-gradient(90deg, #2ca4f5, #4ce8c8);
+    background-color: #7cc4ff;
+    background-image: linear-gradient(
+        90deg,
+        #ff6b8b 0%,
+        #ffc857 22%,
+        #4ce896 45%,
+        #38bdf8 68%,
+        #a855f7 86%,
+        #ff66c4 100%
+    );
+    box-shadow: 0 0 16rem rgba(182, 138, 255, 0.82), 0 0 8rem rgba(96, 220, 255, 0.72);
+}
+
+.undoProgressFillPlain {
+    background-color: #38bdf8;
+    background-image: linear-gradient(90deg, #2596e8 0%, #38d6c4 100%);
+}
+
+.undoProgressSheen {
+    position: absolute;
+    left: 4rem;
+    right: 4rem;
+    top: 2rem;
+    height: 4rem;
+    border-radius: 999rem;
+    background-color: rgba(255, 255, 255, 0.34);
+    pointer-events: none;
+}
+
+.undoProgressFlowBeam {
+    position: absolute;
+    top: -2rem;
+    bottom: -2rem;
+    width: 42%;
+    left: -42%;
+    background-image: linear-gradient(
+        105deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.16) 24%,
+        rgba(255, 255, 255, 0.78) 50%,
+        rgba(255, 255, 255, 0.16) 76%,
+        rgba(255, 255, 255, 0) 100%
+    );
+    pointer-events: none;
+}
+
+.undoProgressTipFlare {
+    position: absolute;
+    right: 0;
+    top: 1rem;
+    bottom: 1rem;
+    width: 8rem;
+    border-radius: 999rem;
+    background-color: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 0 10rem rgba(255, 255, 255, 0.95), 0 0 18rem rgba(120, 232, 255, 0.9);
+    pointer-events: none;
+}
+
+.undoProgressParticle {
+    position: absolute;
+    border-radius: 999rem;
+    background-color: #ffffff;
+    pointer-events: none;
+}
+
+.undoProgressTrackParticle {
+    position: absolute;
+    border-radius: 999rem;
+    background-color: rgba(235, 248, 255, 0.85);
+    pointer-events: none;
 }
 
 .undoPausedBox {
@@ -1063,11 +1530,13 @@
     flex-direction: column;
     padding: 5rem 8rem;
     margin-bottom: 5rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(146, 98, 20, 0.34);
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 198, 86, 0.76);
+    border-color: $accent-warning-border;
+    border-left-width: 3rem;
+    border-left-color: $accent-warning;
     color: #fff2cf;
     font-size: 10rem;
     font-weight: 600;
@@ -1097,31 +1566,6 @@
     margin-left: 8rem;
 }
 
-.undoResumeBtn {
-    height: 20rem;
-    padding: 0 9rem;
-    border-radius: 3rem;
-    background-color: rgba(24, 118, 186, 0.92);
-    border-width: 1rem;
-    border-style: solid;
-    border-color: rgba(132, 214, 255, 0.88);
-    color: #ffffff;
-    font-size: 10rem;
-    font-weight: 700;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    flex-shrink: 0;
-    white-space: nowrap;
-}
-
-.undoResumeBtn:hover {
-    background-color: rgba(34, 144, 224, 0.98);
-    border-color: rgba(186, 232, 255, 1);
-}
-
 .undoNoticeRow {
     display: flex;
     flex-direction: row;
@@ -1148,8 +1592,8 @@
 }
 
 .undoSkippedNote {
-    margin-top: 2rem;
-    font-size: 9rem;
+    margin-bottom: 4rem;
+    font-size: 9.5rem;
     font-weight: 600;
     color: #ffe29a;
 }
@@ -1159,26 +1603,26 @@
     margin-bottom: 4rem;
     font-size: 9rem;
     font-weight: 500;
-    color: rgba(206, 224, 244, 0.78);
+    color: $text-muted;
 }
 
 .undoScopeConsumedHint {
-    padding: 2rem 10rem 4rem 10rem;
-    font-size: 9rem;
+    padding: 4rem 12rem 6rem 12rem;
+    font-size: 9.5rem;
     font-weight: 500;
-    color: rgba(206, 224, 244, 0.78);
+    color: $text-muted;
 }
 
 .undoDismissBtn {
-    height: 18rem;
+    height: 19rem;
     padding: 0 7rem;
     margin-left: 8rem;
     border-radius: 3rem;
-    background-color: rgba(34, 42, 54, 0.9);
+    background-color: $surface-elevated;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 255, 255, 0.28);
-    color: rgba(236, 242, 250, 0.96);
+    border-color: $border-strong;
+    color: $text-primary;
     font-size: 9rem;
     font-weight: 700;
     display: flex;
@@ -1192,31 +1636,30 @@
 
 .undoDismissBtn:hover {
     background-color: rgba(56, 68, 84, 0.98);
-    border-color: rgba(255, 255, 255, 0.48);
-    color: #ffffff;
+    border-color: #ffffff;
 }
 
 .colorDockedCard {
     position: fixed;
     right: 18rem;
-    top: 72rem;
-    width: 420rem;
+    top: 48rem;
+    width: 430rem;
     box-sizing: border-box;
     max-width: calc(100vw - 36rem);
-    max-height: calc(100vh - 84rem);
-    padding: 12rem;
-    border-radius: 7rem;
-    background-color: rgba(15, 20, 29, 0.94);
+    max-height: calc(100vh - 96rem);
+    padding: 10rem 12rem;
+    border-radius: $radius-lg;
+    background-color: $surface-base;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(145, 210, 255, 0.42);
-    color: rgba(242, 246, 252, 0.96);
+    border-color: rgba(145, 210, 255, 0.44);
+    color: $text-primary;
     font-size: 11rem;
     display: flex;
     flex-direction: column;
     pointer-events: auto;
     z-index: 950;
-    box-shadow: 0 10rem 28rem rgba(0, 0, 0, 0.52);
+    box-shadow: 0 10rem 28rem rgba(0, 0, 0, 0.56);
 }
 
 .colorHeader {
@@ -1225,7 +1668,9 @@
     align-items: flex-start;
     justify-content: space-between;
     padding-bottom: 8rem;
-    border-bottom: 1rem solid rgba(255, 255, 255, 0.12);
+    border-bottom-width: 1rem;
+    border-bottom-style: solid;
+    border-bottom-color: $border-subtle;
     cursor: grab;
     flex-shrink: 0;
 }
@@ -1249,16 +1694,16 @@
 .colorSubtitle {
     margin-top: 2rem;
     font-size: 10rem;
-    color: rgba(196, 216, 238, 0.86);
+    color: $text-muted;
 }
 
 .colorCloseIconBtn {
     width: 22rem;
     height: 22rem;
     margin-left: 8rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(255, 255, 255, 0.08);
-    color: rgba(235, 242, 250, 0.9);
+    color: $text-secondary;
     font-size: 15rem;
     font-weight: 700;
     display: flex;
@@ -1274,27 +1719,34 @@
 }
 
 .colorScrollBody {
-    margin-top: 8rem;
-    margin-bottom: 8rem;
+    margin-top: 6rem;
+    margin-bottom: 6rem;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
     min-height: 0;
-    max-height: 615rem;
     padding-right: 4rem;
 }
 
 .colorSection {
-    margin-bottom: 10rem;
-    padding: 8rem;
-    border-radius: 5rem;
-    background-color: rgba(24, 32, 46, 0.78);
+    margin-bottom: 7rem;
+    padding: 7rem;
+    border-radius: $radius-md;
+    background-color: $surface-card;
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 255, 255, 0.08);
+    border-color: $border-subtle;
     display: flex;
     flex-direction: column;
+}
+
+.colorSectionHeader {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6rem;
 }
 
 .colorSectionTitle {
@@ -1302,6 +1754,54 @@
     font-weight: 700;
     color: rgba(182, 224, 255, 0.96);
     margin-bottom: 6rem;
+}
+
+.colorPreviewBar {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5rem 8rem;
+    margin-bottom: 8rem;
+    border-radius: $radius-md;
+    background-color: $surface-inset;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-subtle;
+}
+
+.colorPreviewLabel {
+    font-size: 9.5rem;
+    font-weight: 700;
+    color: $text-muted;
+    margin-right: 8rem;
+    white-space: nowrap;
+}
+
+.colorPreviewSwatches {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex: 1;
+    justify-content: flex-end;
+}
+
+.colorPreviewBoxSample {
+    width: 24rem;
+    height: 15rem;
+    margin-left: 5rem;
+    border-radius: 3rem;
+    border-width: 2rem;
+    border-style: solid;
+}
+
+.colorPreviewDotSample {
+    width: 13rem;
+    height: 13rem;
+    margin-left: 4rem;
+    border-radius: 3rem;
+    border-width: 1.5rem;
+    border-style: solid;
 }
 
 .colorPresetGrid {
@@ -1315,20 +1815,49 @@
     margin-right: 1.5%;
     margin-bottom: 5rem;
     padding: 6rem 8rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(34, 45, 62, 0.88);
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 255, 255, 0.14);
+    border-color: $border-subtle;
     display: flex;
     flex-direction: row;
     align-items: center;
+    justify-content: space-between;
     cursor: pointer;
 }
 
 .colorPresetBtn:hover {
     background-color: rgba(48, 66, 92, 0.96);
     border-color: rgba(145, 210, 255, 0.65);
+}
+
+.colorPresetBtnActive {
+    background-color: rgba(24, 72, 114, 0.94);
+    border-width: 1.5rem;
+    border-color: rgba(112, 212, 255, 0.96);
+}
+
+.colorPresetLeft {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    min-width: 0;
+    flex: 1;
+}
+
+.colorPresetActiveBadge {
+    margin-left: 4rem;
+    padding: 1rem 4rem;
+    border-radius: 3rem;
+    background-color: rgba(56, 189, 248, 0.25);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(125, 211, 252, 0.8);
+    color: #e0f2fe;
+    font-size: 8.5rem;
+    font-weight: 700;
+    flex-shrink: 0;
 }
 
 .colorPresetDots {
@@ -1344,32 +1873,61 @@
     height: 8rem;
     border-radius: 4rem;
     margin-right: 2rem;
-    border: 1rem solid rgba(0, 0, 0, 0.45);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(0, 0, 0, 0.45);
 }
 
 .colorPresetName {
     font-size: 10rem;
     font-weight: 600;
-    color: rgba(240, 246, 252, 0.95);
+    color: $text-primary;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.colorGroupsContainer {
+.colorGroupTabs {
     display: flex;
-    flex-direction: column;
-}
-
-.colorGroupBlock {
+    flex-direction: row;
+    flex-wrap: wrap;
     margin-bottom: 6rem;
+    padding-bottom: 4rem;
+    border-bottom-width: 1rem;
+    border-bottom-style: solid;
+    border-bottom-color: $border-subtle;
 }
 
-.colorGroupLabel {
+.colorGroupTab {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 3rem 7rem;
+    margin-right: 4rem;
+    margin-bottom: 3rem;
+    border-radius: $radius-sm;
+    background-color: rgba(16, 22, 32, 0.72);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-subtle;
+    color: $text-muted;
     font-size: 9.5rem;
     font-weight: 600;
-    color: rgba(186, 202, 222, 0.85);
-    margin-bottom: 3rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.colorGroupTab:hover {
+    color: #ffffff;
+    border-color: $border-strong;
+}
+
+.colorGroupTabActive {
+    background-color: rgba(30, 88, 140, 0.92);
+    border-color: rgba(112, 208, 255, 0.95);
+    color: #ffffff;
+    font-weight: 700;
 }
 
 .colorChipsWrap {
@@ -1382,14 +1940,14 @@
     display: flex;
     flex-direction: row;
     align-items: center;
-    padding: 3rem 7rem;
+    padding: 3.5rem 7rem;
     margin-right: 4rem;
     margin-bottom: 4rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(16, 22, 32, 0.86);
     border-width: 1rem;
     border-style: solid;
-    border-color: rgba(255, 255, 255, 0.14);
+    border-color: $border-subtle;
     cursor: pointer;
 }
 
@@ -1408,22 +1966,24 @@
     height: 11rem;
     border-radius: 3rem;
     margin-right: 5rem;
-    border: 1rem solid rgba(255, 255, 255, 0.38);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.38);
     flex-shrink: 0;
 }
 
 .colorItemName {
     font-size: 10rem;
     font-weight: 600;
-    color: rgba(236, 243, 252, 0.95);
+    color: $text-secondary;
     white-space: nowrap;
 }
 
 .colorEditorBox {
     margin-top: 6rem;
     padding: 8rem;
-    border-radius: 5rem;
-    background-color: rgba(13, 18, 26, 0.9);
+    border-radius: $radius-md;
+    background-color: $surface-inset;
     border-width: 1rem;
     border-style: solid;
     border-color: rgba(145, 210, 255, 0.25);
@@ -1448,9 +2008,11 @@
 .colorEditorPreviewSwatch {
     width: 18rem;
     height: 18rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     margin-right: 7rem;
-    border: 1rem solid rgba(255, 255, 255, 0.55);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.55);
 }
 
 .colorEditorItemName {
@@ -1471,7 +2033,7 @@
 .colorSubHeading {
     font-size: 9.5rem;
     font-weight: 600;
-    color: rgba(192, 208, 228, 0.86);
+    color: $text-muted;
     margin-top: 4rem;
     margin-bottom: 4rem;
 }
@@ -1529,7 +2091,7 @@
 .colorSliderLabel {
     font-size: 10rem;
     font-weight: 600;
-    color: rgba(232, 240, 250, 0.94);
+    color: $text-secondary;
 }
 
 .colorZeroBadge {
@@ -1558,9 +2120,11 @@
     width: 18rem;
     height: 16rem;
     border-radius: 3rem;
-    background-color: rgba(34, 46, 62, 0.92);
-    border: 1rem solid rgba(255, 255, 255, 0.22);
-    color: rgba(235, 244, 252, 0.95);
+    background-color: $surface-elevated;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-subtle;
+    color: $text-primary;
     font-size: 11rem;
     font-weight: 700;
     display: flex;
@@ -1581,7 +2145,9 @@
     height: 12rem;
     margin: 0 6rem;
     border-radius: 6rem;
-    border: 1rem solid rgba(255, 255, 255, 0.28);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.28);
     cursor: pointer;
 }
 
@@ -1602,7 +2168,9 @@
     height: 14rem;
     margin-left: -5rem;
     border-radius: 3rem;
-    border: 1.5rem solid rgba(10, 14, 22, 0.9);
+    border-width: 1.5rem;
+    border-style: solid;
+    border-color: rgba(10, 14, 22, 0.9);
     box-shadow: 0 0 3rem rgba(0, 0, 0, 0.6);
     pointer-events: none;
 }
@@ -1614,13 +2182,15 @@
     justify-content: space-between;
     flex-wrap: wrap;
     padding-top: 8rem;
-    border-top: 1rem solid rgba(255, 255, 255, 0.12);
+    border-top-width: 1rem;
+    border-top-style: solid;
+    border-top-color: $border-subtle;
     flex-shrink: 0;
 }
 
 .colorFooterHint {
     font-size: 9.5rem;
-    color: rgba(182, 200, 222, 0.78);
+    color: $text-muted;
 }
 
 .colorFooterActions {
@@ -1630,12 +2200,14 @@
 }
 
 .colorCloseBtn {
-    height: 24rem;
+    height: $btn-sm;
     padding: 0 12rem;
     margin-left: 6rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(30, 108, 174, 0.94);
-    border: 1rem solid rgba(132, 210, 255, 0.88);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(132, 210, 255, 0.88);
     color: #ffffff;
     font-size: 10.5rem;
     font-weight: 700;
@@ -1656,25 +2228,34 @@
     align-items: center;
     flex-wrap: wrap;
     max-width: 100%;
-    background-color: rgba(12, 20, 32, 0.72);
-    border: 1rem solid rgba(112, 162, 214, 0.34);
-    border-radius: 5rem;
+    background-color: $surface-inset;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(112, 162, 214, 0.34);
+    border-radius: $radius-md;
     padding: 2rem;
 }
 
 .modeSwitcherBtn {
-    min-height: 24rem;
+    min-height: $btn-sm;
     padding: 2rem 8rem;
-    border-radius: 3.5rem;
-    border: 1rem solid transparent;
+    margin-right: 2rem;
+    border-radius: 4rem;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: transparent;
     background-color: transparent;
-    color: rgba(205, 222, 240, 0.84);
+    color: $text-muted;
     font-size: 10.5rem;
     font-weight: 600;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
+
+    &:last-child {
+        margin-right: 0;
+    }
 }
 
 .modeSwitcherBtn:hover {
@@ -1702,9 +2283,11 @@
     justify-content: space-between;
     padding: 4rem 7rem;
     margin-bottom: 5rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(20, 44, 70, 0.72);
-    border: 1rem solid rgba(102, 184, 248, 0.42);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(102, 184, 248, 0.42);
 }
 
 .polygonDraftLeft {
@@ -1718,7 +2301,9 @@
     font-weight: 700;
     color: #d6eeff;
     background-color: rgba(24, 78, 128, 0.85);
-    border: 1rem solid rgba(118, 200, 255, 0.55);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(118, 200, 255, 0.55);
     border-radius: 3rem;
     padding: 1.5rem 6rem;
     margin-right: 6rem;
@@ -1736,9 +2321,13 @@
     align-items: center;
     padding: 4.5rem 8rem;
     margin-bottom: 5rem;
-    border-radius: 4rem;
-    background-color: rgba(16, 96, 86, 0.86);
-    border: 1rem solid rgba(82, 242, 204, 0.9);
+    border-radius: $radius-sm;
+    background-color: $accent-success-bg;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $accent-success-border;
+    border-left-width: 3rem;
+    border-left-color: $accent-success;
     color: #dffff6;
     font-size: 10.5rem;
     font-weight: 700;
@@ -1750,9 +2339,13 @@
     align-items: center;
     padding: 5rem 8rem;
     margin-bottom: 5rem;
-    border-radius: 4rem;
-    background-color: rgba(176, 52, 20, 0.9);
-    border: 1.5rem solid rgba(255, 146, 84, 0.95);
+    border-radius: $radius-sm;
+    background-color: rgba(176, 52, 20, 0.88);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(255, 146, 84, 0.95);
+    border-left-width: 3rem;
+    border-left-color: $accent-danger;
     color: #fff2eb;
     font-size: 10.5rem;
     font-weight: 700;
@@ -1764,9 +2357,13 @@
     align-items: center;
     padding: 5rem 8rem;
     margin-bottom: 5rem;
-    border-radius: 4rem;
-    background-color: rgba(146, 84, 18, 0.88);
-    border: 1rem solid rgba(255, 190, 92, 0.85);
+    border-radius: $radius-sm;
+    background-color: $accent-warning-bg;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $accent-warning-border;
+    border-left-width: 3rem;
+    border-left-color: $accent-warning;
     color: #fff3da;
     font-size: 10.5rem;
     font-weight: 600;
@@ -1780,9 +2377,11 @@
     justify-content: space-between;
     padding: 4.5rem 8rem;
     margin-bottom: 5rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(22, 68, 108, 0.82);
-    border: 1rem solid rgba(112, 206, 255, 0.72);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(112, 206, 255, 0.72);
 }
 
 .freehandBadge {
@@ -1797,7 +2396,7 @@
 .freehandDot {
     width: 7rem;
     height: 7rem;
-    border-radius: 50%;
+    border-radius: 4rem;
     background-color: #5ee6ff;
     margin-right: 6rem;
 }
@@ -1810,26 +2409,32 @@
 }
 
 .presetBtn {
-    padding: 3rem 7rem;
+    min-height: $btn-sm;
+    padding: 3rem 8rem;
     margin-right: 4rem;
-    margin-bottom: 3rem;
-    border-radius: 4rem;
+    margin-bottom: 4rem;
+    border-radius: $radius-sm;
     font-size: 10.5rem;
     font-weight: 600;
-    color: rgba(235, 244, 255, 0.9);
-    background-color: rgba(24, 34, 48, 0.8);
-    border: 1rem solid rgba(150, 180, 220, 0.35);
+    color: $text-secondary;
+    background-color: $surface-card;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-subtle;
 
     &:hover {
-        background-color: rgba(44, 68, 98, 0.9);
-        border-color: rgba(150, 204, 255, 0.72);
+        background-color: $surface-elevated;
+        border-color: $accent-info-border;
+        color: #ffffff;
     }
 }
 
 .presetBtnActive {
     color: #e6f7ff;
-    background-color: rgba(26, 98, 152, 0.92);
-    border: 1rem solid rgba(114, 210, 255, 0.95);
+    background-color: rgba(26, 98, 152, 0.94);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(114, 210, 255, 0.95);
 }
 
 .presetBtnEmpty {
@@ -1841,7 +2446,7 @@
     flex-direction: row;
     align-items: center;
     margin-right: 6rem;
-    margin-bottom: 3rem;
+    margin-bottom: 4rem;
 
     .presetBtn {
         margin-right: 2rem;
@@ -1851,14 +2456,17 @@
 
 .customSlotActionBtn,
 .customSlotClearBtn {
-    padding: 3rem 5rem;
+    min-height: $btn-sm;
+    padding: 3rem 6rem;
     margin-right: 2rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     font-size: 10.5rem;
     font-weight: 700;
     color: #d8ecff;
     background-color: rgba(28, 48, 72, 0.85);
-    border: 1rem solid rgba(130, 175, 220, 0.4);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-subtle;
 
     &:hover {
         background-color: rgba(48, 86, 128, 0.95);
@@ -1875,34 +2483,44 @@
 }
 
 .netSubToggleBtn {
-    padding: 4rem 7rem;
-    margin-left: 4rem;
-    border-radius: 4rem;
-    font-size: 10.5rem;
-    font-weight: 600;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    min-height: 22rem;
+    padding: 2rem 8rem;
+    border-radius: $radius-sm;
+    font-size: 10rem;
+    font-weight: 700;
     color: #d8ecff;
-    background-color: rgba(24, 38, 56, 0.85);
-    border: 1rem solid rgba(130, 176, 224, 0.42);
+    background-color: $surface-card;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-strong;
+    cursor: pointer;
 
     &:hover {
-        background-color: rgba(42, 68, 102, 0.92);
+        background-color: $surface-elevated;
+        border-color: $accent-info-border;
+        color: #ffffff;
     }
 }
 
 .netSubToggleFiltered {
-    border-color: rgba(255, 194, 96, 0.85);
+    border-color: $accent-warning-border;
     color: #fff2d6;
 }
 
 .netSubPanel {
     display: flex;
     flex-direction: column;
-    padding: 6rem 8rem;
-    margin-top: 4rem;
-    margin-bottom: 4rem;
-    border-radius: 4rem;
-    background-color: rgba(14, 22, 34, 0.82);
-    border: 1rem solid rgba(110, 162, 214, 0.35);
+    padding: 6rem 10rem;
+    margin: 2rem 12rem 6rem 12rem;
+    border-radius: $radius-md;
+    background-color: $surface-inset;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-strong;
 }
 
 .netSubRow {
@@ -1919,29 +2537,35 @@
 .roadFacilityRow {
     margin-top: 6rem;
     padding-top: 6rem;
-    border-top: 1rem solid rgba(110, 162, 214, 0.3);
+    border-top-width: 1rem;
+    border-top-style: solid;
+    border-top-color: $border-subtle;
 }
 
 .roadFacilityLabel {
     width: 100%;
     margin-bottom: 4rem;
-    font-size: 11rem;
+    font-size: 10.5rem;
     font-weight: 700;
+    color: $text-secondary;
 }
 
 .netSubChip {
     padding: 3rem 8rem;
     margin-right: 5rem;
     margin-bottom: 3rem;
-    border-radius: 4rem;
-    font-size: 10.5rem;
+    border-radius: $radius-sm;
+    font-size: 10rem;
     font-weight: 600;
-    color: rgba(226, 238, 252, 0.82);
-    background-color: rgba(26, 36, 50, 0.85);
-    border: 1rem solid rgba(130, 165, 200, 0.35);
+    color: $text-secondary;
+    background-color: $surface-card;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-subtle;
+    cursor: pointer;
 
     &:hover {
-        background-color: rgba(44, 66, 94, 0.92);
+        background-color: $surface-elevated;
     }
 }
 
@@ -1961,15 +2585,17 @@
 .pickSimilarBtnArmed {
     display: flex;
     align-items: center;
-    height: 28rem;
+    height: $btn-md;
     padding: 0 9rem;
     white-space: nowrap;
-    border-radius: 4rem;
-    font-size: 11.5rem;
+    border-radius: $radius-sm;
+    font-size: 10.5rem;
     font-weight: 700;
     color: #dff4ff;
     background-color: rgba(24, 68, 108, 0.9);
-    border: 1rem solid rgba(108, 198, 255, 0.65);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(108, 198, 255, 0.65);
 
     &:hover {
         background-color: rgba(34, 92, 146, 0.95);
@@ -1992,11 +2618,13 @@
     align-items: center;
     padding: 5rem 8rem;
     margin-bottom: 5rem;
-    border-radius: 4rem;
+    border-radius: $radius-sm;
     background-color: rgba(16, 88, 102, 0.9);
-    border: 1rem solid rgba(98, 240, 255, 0.9);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(98, 240, 255, 0.9);
     color: #e6fdff;
-    font-size: 10.5rem;
+    font-size: 10rem;
     font-weight: 700;
 }
 
@@ -2004,47 +2632,56 @@
     display: flex;
     flex-direction: row;
     align-items: stretch;
-    padding: 3rem;
-    margin: 4rem 12rem 5rem;
-    min-height: 30rem;
-    background-color: rgba(16, 24, 38, 0.7);
-    border-radius: 6rem;
+    margin-top: 2rem;
 }
 
 .navTabBtn {
     flex: 1 1 0;
     min-width: 0;
-    margin: 0 2rem;
-    padding: 3rem 4rem;
-    border-radius: 4rem;
+    min-height: 26rem;
+    padding: 4rem 6rem 5rem 6rem;
+    margin-right: 4rem;
+    border-top-width: 0;
+    border-left-width: 0;
+    border-right-width: 0;
+    border-bottom-width: 2rem;
+    border-style: solid;
+    border-color: transparent;
+    border-radius: 3rem 3rem 0 0;
     font-size: 11rem;
-    font-weight: 700;
-    color: rgba(200, 218, 240, 0.85);
-    background-color: rgba(26, 38, 56, 0.75);
-    border: 1rem solid rgba(80, 115, 155, 0.4);
+    font-weight: 600;
+    color: $text-muted;
+    background-color: transparent;
     cursor: pointer;
     pointer-events: auto;
-    white-space: normal;
+    white-space: nowrap;
     text-align: center;
 
+    &:last-child {
+        margin-right: 0;
+    }
+
     &:hover {
-        background-color: rgba(38, 56, 82, 0.9);
+        background-color: rgba(38, 56, 82, 0.42);
         color: #ffffff;
     }
 }
 
 .navTabBtnActive {
     color: #ffffff;
-    background-color: rgba(30, 96, 158, 0.9);
-    border-color: rgba(100, 190, 255, 0.85);
+    font-weight: 700;
+    background-color: rgba(30, 96, 158, 0.28);
+    border-bottom-color: $accent-info;
 }
 
 .impactReportCard {
     margin-top: 6rem;
-    padding: 8rem 10rem;
-    border-radius: 6rem;
-    background-color: rgba(18, 26, 40, 0.95);
-    border: 1rem solid rgba(90, 140, 190, 0.55);
+    padding: 7rem 9rem;
+    border-radius: $radius-md;
+    background-color: $surface-inset;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-strong;
 }
 
 .impactReportHeader {
@@ -2052,8 +2689,8 @@
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 6rem;
-    font-size: 11.5rem;
+    margin-bottom: 5rem;
+    font-size: 11rem;
     font-weight: 700;
     color: #a8dfff;
 }
@@ -2061,8 +2698,7 @@
 .impactReportList {
     display: flex;
     flex-direction: column;
-    gap: 3rem;
-    max-height: 140rem;
+    max-height: 120rem;
     overflow-y: auto;
 }
 
@@ -2072,10 +2708,15 @@
     align-items: center;
     justify-content: space-between;
     padding: 3rem 6rem;
+    margin-bottom: 3rem;
     border-radius: 3rem;
-    background-color: rgba(28, 40, 60, 0.75);
-    font-size: 10.5rem;
-    color: #e2eeff;
+    background-color: rgba(28, 40, 60, 0.78);
+    font-size: 10rem;
+    color: $text-primary;
+
+    &:last-child {
+        margin-bottom: 0;
+    }
 }
 
 .impactReportItemCount {
@@ -2084,25 +2725,19 @@
     margin-left: 8rem;
 }
 
-.topToolbarRow {
+.modeInfoToggleBtn {
+    height: $btn-sm;
+    padding: 0 8rem;
+    border-radius: $radius-sm;
+    font-size: 10rem;
+    font-weight: 600;
+    color: $text-secondary;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-subtle;
     display: flex;
     flex-direction: row;
-    align-items: center;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    max-width: 100%;
-}
-
-.modeInfoToggleBtn {
-    height: 24rem;
-    margin-left: 5rem;
-    padding: 0 8rem;
-    border-radius: 4rem;
-    font-size: 10.5rem;
-    color: rgba(180, 210, 240, 0.9);
-    background-color: rgba(255, 255, 255, 0.06);
-    border: 1rem solid rgba(255, 255, 255, 0.15);
-    display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
@@ -2123,34 +2758,41 @@
     display: flex;
     flex-direction: column;
     padding: 8rem 12rem;
-    margin: 4rem 12rem 6rem;
-    border-radius: 6rem;
-    background-color: rgba(14, 20, 30, 0.92);
-    border: 1rem solid rgba(255, 255, 255, 0.16);
-    font-size: 11rem;
-    color: rgba(220, 232, 246, 0.9);
-    gap: 6rem;
+    margin: 4rem 12rem 6rem 12rem;
+    border-radius: $radius-md;
+    background-color: $surface-inset;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-subtle;
+    font-size: 10.5rem;
+    color: $text-secondary;
 }
 
 .modeInfoDesc {
     color: #ffffff;
     font-weight: 500;
     line-height: 1.4;
+    margin-bottom: 6rem;
 }
 
 .modeInfoHotkeys {
     display: flex;
+    flex-direction: row;
     flex-wrap: wrap;
-    gap: 6rem;
-    color: rgba(180, 205, 230, 0.9);
-    font-size: 10.5rem;
+    color: $text-secondary;
+    font-size: 10rem;
+    margin-bottom: 4rem;
 }
 
 .modeInfoHotkeyTag {
     background-color: rgba(255, 255, 255, 0.08);
     padding: 2rem 6rem;
+    margin-right: 5rem;
+    margin-bottom: 4rem;
     border-radius: 3rem;
-    border: 1rem solid rgba(255, 255, 255, 0.14);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $border-subtle;
     font-family: monospace;
 }
 
@@ -2159,37 +2801,39 @@
     align-items: center;
     justify-content: space-between;
     padding-top: 5rem;
-    border-top: 1rem solid rgba(255, 255, 255, 0.1);
-}
-
-.confirmBtnPreviewOnly {
-    background-color: rgba(55, 60, 70, 0.9);
-    background-image: none;
-    border: 1rem solid rgba(255, 184, 58, 0.6);
-    color: #ffda88;
-    cursor: not-allowed;
+    border-top-width: 1rem;
+    border-top-style: solid;
+    border-top-color: rgba(255, 255, 255, 0.1);
 }
 
 .statusAmberBadge {
-    background-color: rgba(245, 158, 11, 0.25);
-    border: 1rem solid rgba(245, 158, 11, 0.85);
+    background-color: $accent-warning-bg;
+    border-width: 1rem;
+    border-style: solid;
+    border-color: $accent-warning-border;
     color: #fcd34d;
-    padding: 2rem 6rem;
-    border-radius: 4rem;
-    font-size: 10.5rem;
-    font-weight: 600;
+    padding: 3rem 7rem;
+    margin-bottom: 4rem;
+    border-radius: $radius-sm;
+    font-size: 10rem;
+    font-weight: 700;
     display: flex;
     align-items: center;
-    gap: 4rem;
 }
 
 .calculatingBadge {
+    margin-left: 5rem;
     background-color: rgba(59, 130, 246, 0.25);
-    border: 1rem solid rgba(96, 165, 250, 0.7);
+    border-width: 1rem;
+    border-style: solid;
+    border-color: rgba(96, 165, 250, 0.7);
     color: #93c5fd;
-    padding: 2rem 6rem;
-    border-radius: 4rem;
-    font-size: 10.5rem;
+    padding: 1.5rem 6rem;
+    border-radius: $radius-sm;
+    font-size: 9.5rem;
     font-weight: 600;
 }
 
+.undoScopeSectionSpacer {
+    height: 1rem;
+}
