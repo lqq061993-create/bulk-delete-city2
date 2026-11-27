@@ -98,10 +98,13 @@ namespace MarqueeDelete
         private int m_UndoDiagDelayFrames;
         private int m_UndoDiagRestoredCount;
         private int m_UndoDiagNeighborCount;
+        private int m_UndoDiagStreetsRefreshed;
+        private int m_UndoDiagLocalConnectNodes;
         private readonly List<float3> m_UndoDiagBuildingPositions = new List<float3>();
         private BatchTaskRecord m_TaskRecord;
         private ToolOutputBarrier m_DeletionBarrier;
         private readonly DeletionUndoManager m_UndoManager = new DeletionUndoManager();
+        private readonly GlobalUndoManager m_GlobalUndo = new GlobalUndoManager();
         private readonly HashSet<Entity> m_Highlighted = new HashSet<Entity>();
         private readonly HashSet<Entity> m_OwnedHighlights = new HashSet<Entity>();
         private readonly HashSet<Entity> m_DesiredHighlights = new HashSet<Entity>();
@@ -270,6 +273,7 @@ namespace MarqueeDelete
 
         public bool ImportantModalOpen => !m_Dragging && m_ImportantModalOpen;
         public bool ColorModalOpen { get; private set; }
+        public bool GlobalUndoPanelOpen { get; set; }
         public bool PickSimilarArmed => m_Session.PickSimilarArmed && HasPending && !m_Session.HasPolygonDraft;
         public EscapeFrameGate EscapeGate => m_EscapeGate;
         public string SelectionNotice { get; private set; } = string.Empty;
@@ -426,8 +430,44 @@ namespace MarqueeDelete
         }
         public string ImportantListRaw => m_ImportantListRaw ?? string.Empty;
         private UndoAssetMask CurrentUndoMask => Mod.Settings != null ? Mod.Settings.BuildUndoMask() : UndoAssetMask.All;
-        public bool HasActiveUndo => m_UndoManager.HasActiveUndo;
-        public SelectiveUndoUiSnapshot GetUndoUiSnapshot() => m_UndoManager.GetUiSnapshot(CurrentUndoMask);
+        public bool HasActiveUndo => m_GlobalUndo.HasActiveUndo || m_UndoManager.HasActiveUndo;
+        public bool IsGlobalUndoReplaying => m_GlobalUndo.IsReplaying || m_UndoManager.IsInProgress;
+        public bool IsExternalUndoToolActive
+        {
+            get
+            {
+                ToolBaseSystem t = m_ToolSystem?.activeTool;
+                if (t == null) return false;
+                return GlobalUndoPolicy.ShouldYieldCtrlZ(t.toolID, t.GetType().FullName ?? t.GetType().Name);
+            }
+        }
+        public SelectiveUndoUiSnapshot GetUndoUiSnapshot() => m_GlobalUndo.GetSelectiveUiSnapshot(CurrentUndoMask, m_UndoManager);
+        public GlobalUndoUiState GetGlobalUndoUiState() => m_GlobalUndo.GetGlobalUiState(m_ToolSystem);
+
+        public void ClearGlobalUndoHistory()
+        {
+            m_GlobalUndo.ClearHistory(m_UndoManager);
+            PlayUiSound(selectEntity: false);
+        }
+
+        internal void OnGlobalUndoPreApply(
+            ToolSystem toolSystem,
+            TerrainSystem terrainSystem,
+            EntityQuery tempQuery,
+            EntityQuery zoneTempQuery,
+            EntityQuery brushTempQuery)
+        {
+            if (HasQueuedDeletion || IsEditingRoadFacilities)
+            {
+                return;
+            }
+            m_GlobalUndo.OnPreApply(EntityManager, toolSystem, terrainSystem, m_UndoManager, tempQuery, zoneTempQuery, brushTempQuery);
+        }
+
+        internal void OnGlobalUndoPostApply(EntityQuery createdQuery)
+        {
+            m_GlobalUndo.OnPostApply(EntityManager, createdQuery);
+        }
         public MarqueeShapeXZ ActiveShape
         {
             get
@@ -654,6 +694,7 @@ namespace MarqueeDelete
         {
             FacilityMode = RoadFacilityMode.None;
             ColorModalOpen = false;
+            GlobalUndoPanelOpen = false;
             m_EscapeGate.Reset();
             m_Session.CancelActiveInteraction();
             m_Session.PickSimilarArmed = false;
@@ -675,13 +716,14 @@ namespace MarqueeDelete
             m_UndoRefreshNetPositions.Clear();
             m_UndoDiagDelayFrames = 0;
             m_UndoDiagBuildingPositions.Clear();
-            m_UndoManager.ClearHistory();
+            m_GlobalUndo.ClearHistory(m_UndoManager);
             base.OnGamePreload(purpose, mode);
         }
 
         protected override void OnDestroy()
         {
             ColorModalOpen = false;
+            GlobalUndoPanelOpen = false;
             m_EscapeGate.Reset();
             m_Session.CancelActiveInteraction();
             ClearAssetOverlay();
@@ -691,7 +733,7 @@ namespace MarqueeDelete
             m_UndoRefreshNetPositions.Clear();
             m_UndoDiagDelayFrames = 0;
             m_UndoDiagBuildingPositions.Clear();
-            m_UndoManager.ClearHistory();
+            m_GlobalUndo.ClearHistory(m_UndoManager);
             base.OnDestroy();
         }
 
@@ -880,6 +922,7 @@ namespace MarqueeDelete
             if (hasVisible)
             {
                 m_LastClosedShapeInvalid = false;
+                m_GlobalUndo.ClearNonAlertFinishedNotice();
                 m_UndoManager.ClearNonAlertFinishedNotice();
             }
             bool blocked = hasVisible && m_PendingResult.AffectsProtectedObject;
@@ -1174,7 +1217,10 @@ namespace MarqueeDelete
 
             if (m_BatchedDeletion != null)
             {
-                if (Keyboard.current?.escapeKey.wasPressedThisFrame == true)
+                int frameCount = UnityEngine.Time.frameCount;
+                bool escapePressed = Keyboard.current?.escapeKey.wasPressedThisFrame == true;
+                if (escapePressed && !GlobalUndoPanelOpen && !ColorModalOpen && !m_ImportantModalOpen &&
+                    !m_EscapeGate.IsConsumedThisFrame(frameCount) && m_EscapeGate.TryConsume(frameCount))
                 {
                     PauseDeletion("stopped");
                     SelectionNotice = "deletion_stopped";
@@ -1246,6 +1292,7 @@ namespace MarqueeDelete
                 MouseOverUi = mouseOverUi,
                 ImportantModalOpen = m_ImportantModalOpen,
                 ColorModalOpen = ColorModalOpen,
+                GlobalUndoPanelOpen = GlobalUndoPanelOpen,
                 HasActiveUndo = HasActiveUndo,
                 HasQueuedDeletion = m_QueuedDeletion != null,
                 HasPending = HasPending,
@@ -1318,7 +1365,8 @@ namespace MarqueeDelete
                     ConfirmPendingDeletion();
                     return inputDeps;
                 case ToolStepOutcome.DeferredToUiColorModalEscape:
-                    return inputDeps;
+                case ToolStepOutcome.DeferredToUiGlobalUndoEscape:
+                    break;
                 case ToolStepOutcome.CancelledActiveInteraction:
                     PlayUiSound(selectEntity: false);
                     break;
@@ -1740,6 +1788,7 @@ namespace MarqueeDelete
                 FramesRemaining = 2
             };
 
+            m_GlobalUndo.ClearFinishedNotice();
             m_UndoManager.ClearFinishedNotice();
             if (result.EffectiveCount > MaxBatchImpact || result.Plan.Submitted.Count > MaxBatchRoots)
             {
@@ -2060,7 +2109,7 @@ namespace MarqueeDelete
             if (deferUndoCommit)
                 m_UndoManager.RecordSubmittedBatch(EntityManager, plan);
             else
-                m_UndoManager.CaptureBeforeDelete(EntityManager, plan, deferCommit: false);
+                m_GlobalUndo.PushBulkDelete(m_UndoManager.CaptureDetachedSnapshot(EntityManager, plan));
 
             m_PendingAuditLog.Submitted += plan.Submitted.Count;
             return true;
@@ -2291,7 +2340,7 @@ namespace MarqueeDelete
             m_DeletionItems = null;
             m_DeferredDeletionNodes = null;
             m_BlockedDeletionNodes = null;
-            m_UndoManager.CommitDeletionCapture();
+            m_GlobalUndo.PushBulkDelete(m_UndoManager.FinalizeDeferredCaptureDetached());
             if (m_PendingAuditLog != null)
             {
                 if (m_TaskRecord != null)
@@ -2519,7 +2568,7 @@ namespace MarqueeDelete
                 return false;
             }
 
-            if (!m_UndoManager.StartUndo(CurrentUndoMask))
+            if (!m_GlobalUndo.StartOrResumeUndo(CurrentUndoMask, m_UndoManager))
             {
                 return false;
             }
@@ -2531,7 +2580,7 @@ namespace MarqueeDelete
 
         public bool CancelActiveUndo()
         {
-            if (!m_UndoManager.CancelActiveUndo())
+            if (!m_GlobalUndo.PauseActiveUndo(m_UndoManager))
             {
                 return false;
             }
@@ -2542,7 +2591,7 @@ namespace MarqueeDelete
 
         public bool StopUndo()
         {
-            if (!m_UndoManager.StopActiveUndo())
+            if (!m_GlobalUndo.StopActiveUndo(m_UndoManager))
             {
                 return false;
             }
@@ -2553,7 +2602,7 @@ namespace MarqueeDelete
 
         public bool DismissUndoFinishedNotice()
         {
-            return m_UndoManager.DismissFinishedNotice();
+            return m_GlobalUndo.DismissFinishedNotice(m_UndoManager);
         }
 
         public void TickUndo(ToolOutputBarrier barrier)
@@ -2570,12 +2619,14 @@ namespace MarqueeDelete
                 m_UndoRefreshNetPositions.Clear();
                 m_UndoDiagDelayFrames = 0;
                 m_UndoDiagBuildingPositions.Clear();
-                if (m_UndoManager.IsInProgress)
+                if (m_GlobalUndo.HasActiveUndo || m_UndoManager.IsInProgress)
                 {
-                    m_UndoManager.ClearHistory();
+                    m_GlobalUndo.ClearHistory(m_UndoManager);
                 }
                 return;
             }
+
+            m_GlobalUndo.TickCoalescer(m_ToolSystem, UnityEngine.Time.frameCount);
 
             if (m_UndoRefreshDelayFrames > 0)
             {
@@ -2595,22 +2646,38 @@ namespace MarqueeDelete
                 }
             }
 
-            if (!m_UndoManager.IsInProgress)
+            if (!m_GlobalUndo.IsReplaying)
             {
                 return;
             }
 
             if (Mod.Settings != null && !Mod.Settings.Enabled)
             {
-                m_UndoManager.CancelActiveUndo();
+                m_GlobalUndo.PauseActiveUndo(m_UndoManager);
                 return;
             }
 
-            m_UndoManager.Step(EntityManager, barrier.CreateCommandBuffer(), out bool completed);
+            var waterSystem = World.GetExistingSystemManaged<WaterSystem>();
+            var objSearch = World.GetExistingSystemManaged<Game.Objects.SearchSystem>();
+            var netSearch = World.GetExistingSystemManaged<Game.Net.SearchSystem>();
+            var cityConfig = World.GetExistingSystemManaged<Game.City.CityConfigurationSystem>();
+            bool isLeftHandTraffic = cityConfig != null && cityConfig.leftHandTraffic;
+            m_GlobalUndo.TickReplay(
+                EntityManager,
+                barrier,
+                m_TerrainSystem,
+                waterSystem,
+                objSearch,
+                netSearch,
+                m_UndoManager,
+                out bool completed,
+                isLeftHandTraffic);
             if (completed)
             {
                 PlayUiSound(selectEntity: true);
-                if (m_UndoManager.TryConsumeConnectionRefresh(m_UndoRefreshBuildingPositions, m_UndoRefreshNetPositions))
+                bool hasDelRefresh = m_UndoManager.TryConsumeConnectionRefresh(m_UndoRefreshBuildingPositions, m_UndoRefreshNetPositions);
+                bool hasInPlaceRefresh = m_GlobalUndo.TryConsumeInPlaceNetRefresh(m_UndoRefreshNetPositions);
+                if (hasDelRefresh || hasInPlaceRefresh)
                 {
                     m_UndoRefreshDelayFrames = 4;
                 }
@@ -2690,9 +2757,83 @@ namespace MarqueeDelete
             }
         }
 
-        private void MarkBuildingGraphUpdated(EntityCommandBuffer ecb, HashSet<Entity> marked, Entity root, bool includeUpgrades, int depth = 0)
+        private bool IsOwnedInternalNet(Entity entity)
+        {
+            if (entity == Entity.Null || !EntityManager.HasComponent<Owner>(entity))
+            {
+                return false;
+            }
+
+            if (EntityManager.HasComponent<PrefabRef>(entity))
+            {
+                Entity prefab = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
+                if (prefab != Entity.Null && EntityManager.Exists(prefab) && EntityManager.HasComponent<NetGeometryData>(prefab))
+                {
+                    if ((EntityManager.GetComponentData<NetGeometryData>(prefab).m_Flags & GeometryFlags.SubOwner) != 0)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private void CollectAndMarkBuildingSubNode(
+            EntityCommandBuffer ecb,
+            HashSet<Entity> marked,
+            Entity node,
+            List<Entity> buildingLocalConnectNodes,
+            HashSet<Entity> buildingLocalConnectSet)
+        {
+            if (node == Entity.Null || !EntityManager.Exists(node) ||
+                EntityManager.HasComponent<Deleted>(node) ||
+                EntityManager.HasComponent<Temp>(node) ||
+                !EntityManager.HasComponent<Game.Net.Node>(node))
+            {
+                return;
+            }
+
+            bool hasLocalConnect = EntityManager.HasComponent<Game.Net.LocalConnect>(node);
+            if (hasLocalConnect && buildingLocalConnectNodes != null && buildingLocalConnectSet != null &&
+                buildingLocalConnectSet.Add(node))
+            {
+                buildingLocalConnectNodes.Add(node);
+            }
+
+            if (hasLocalConnect || !IsOwnedInternalNet(node))
+            {
+                MarkEntityUpdated(ecb, marked, node);
+            }
+        }
+
+        private void MarkBuildingGraphUpdated(
+            EntityCommandBuffer ecb,
+            HashSet<Entity> marked,
+            Entity root,
+            bool includeUpgrades,
+            int depth = 0,
+            List<Entity> buildingLocalConnectNodes = null,
+            HashSet<Entity> buildingLocalConnectSet = null,
+            List<Entity> directStreetEdges = null,
+            HashSet<Entity> directStreetEdgeSet = null)
         {
             MarkEntityUpdated(ecb, marked, root);
+
+            if (directStreetEdges != null && directStreetEdgeSet != null &&
+                EntityManager.HasComponent<Game.Buildings.Building>(root))
+            {
+                Entity roadEdge = EntityManager.GetComponentData<Game.Buildings.Building>(root).m_RoadEdge;
+                if (roadEdge != Entity.Null && EntityManager.Exists(roadEdge) &&
+                    !EntityManager.HasComponent<Deleted>(roadEdge) &&
+                    !EntityManager.HasComponent<Temp>(roadEdge) &&
+                    EntityManager.HasComponent<Edge>(roadEdge) &&
+                    !IsOwnedInternalNet(roadEdge) &&
+                    directStreetEdgeSet.Add(roadEdge))
+                {
+                    directStreetEdges.Add(roadEdge);
+                }
+            }
 
             if (EntityManager.HasBuffer<Game.Buildings.SpawnLocationElement>(root))
             {
@@ -2709,14 +2850,28 @@ namespace MarqueeDelete
                 for (int i = 0; i < subNets.Length; i++)
                 {
                     Entity subNet = subNets[i].m_SubNet;
-                    MarkEntityUpdated(ecb, marked, subNet);
-                    if (subNet != Entity.Null && EntityManager.Exists(subNet) &&
-                        !EntityManager.HasComponent<Deleted>(subNet) &&
-                        EntityManager.HasComponent<Edge>(subNet))
+                    if (subNet == Entity.Null || !EntityManager.Exists(subNet) ||
+                        EntityManager.HasComponent<Deleted>(subNet) ||
+                        EntityManager.HasComponent<Temp>(subNet))
                     {
+                        continue;
+                    }
+
+                    if (EntityManager.HasComponent<Edge>(subNet))
+                    {
+                        // Never mark owned internal SubNet edges Updated: GenerateEdgesSystem would run
+                        // UpdateNodeConnections on internal footpaths/driveways and cross-wire/deform them.
+                        if (!IsOwnedInternalNet(subNet))
+                        {
+                            MarkEntityUpdated(ecb, marked, subNet);
+                        }
                         Edge subEdge = EntityManager.GetComponentData<Edge>(subNet);
-                        MarkEntityUpdated(ecb, marked, subEdge.m_Start);
-                        MarkEntityUpdated(ecb, marked, subEdge.m_End);
+                        CollectAndMarkBuildingSubNode(ecb, marked, subEdge.m_Start, buildingLocalConnectNodes, buildingLocalConnectSet);
+                        CollectAndMarkBuildingSubNode(ecb, marked, subEdge.m_End, buildingLocalConnectNodes, buildingLocalConnectSet);
+                    }
+                    else if (EntityManager.HasComponent<Game.Net.Node>(subNet))
+                    {
+                        CollectAndMarkBuildingSubNode(ecb, marked, subNet, buildingLocalConnectNodes, buildingLocalConnectSet);
                     }
                 }
             }
@@ -2743,7 +2898,7 @@ namespace MarqueeDelete
                     {
                         continue;
                     }
-                    MarkBuildingGraphUpdated(ecb, marked, subObj, includeUpgrades: false, depth: depth + 1);
+                    MarkBuildingGraphUpdated(ecb, marked, subObj, includeUpgrades: false, depth: depth + 1, buildingLocalConnectNodes, buildingLocalConnectSet, directStreetEdges, directStreetEdgeSet);
                 }
             }
 
@@ -2755,9 +2910,28 @@ namespace MarqueeDelete
                     Entity upg = upgrades[i].m_Upgrade;
                     if (upg != Entity.Null && EntityManager.Exists(upg) && !EntityManager.HasComponent<Deleted>(upg))
                     {
-                        MarkBuildingGraphUpdated(ecb, marked, upg, includeUpgrades: false, depth: depth + 1);
+                        MarkBuildingGraphUpdated(ecb, marked, upg, includeUpgrades: false, depth: depth + 1, buildingLocalConnectNodes, buildingLocalConnectSet, directStreetEdges, directStreetEdgeSet);
                     }
                 }
+            }
+        }
+
+        private void CollectStandaloneEdge(Entity entity, List<Entity> candidateEdges, HashSet<Entity> candidateEdgeSet)
+        {
+            if (entity == Entity.Null || !EntityManager.Exists(entity) ||
+                EntityManager.HasComponent<Deleted>(entity) ||
+                EntityManager.HasComponent<Temp>(entity) ||
+                !EntityManager.HasComponent<Edge>(entity) ||
+                !EntityManager.HasComponent<Curve>(entity) ||
+                !EntityManager.HasBuffer<Game.Net.ConnectedNode>(entity) ||
+                IsOwnedInternalNet(entity))
+            {
+                return;
+            }
+
+            if (candidateEdgeSet.Add(entity))
+            {
+                candidateEdges.Add(entity);
             }
         }
 
@@ -2834,15 +3008,27 @@ namespace MarqueeDelete
 
             EntityCommandBuffer ecb = barrier.CreateCommandBuffer();
             var marked = new HashSet<Entity>(128);
+            var candidateStandaloneEdges = new List<Entity>(128);
+            var candidateStandaloneEdgeSet = new HashSet<Entity>(128);
+            var directStreetEdges = new List<Entity>(32);
+            var directStreetEdgeSet = new HashSet<Entity>(32);
+            var buildingLocalConnectNodes = new List<Entity>(64);
+            var buildingLocalConnectSet = new HashSet<Entity>(64);
+            var restoredBuildingEntries = new List<RestoredBuildingEntry>(Math.Max(8, m_UndoRefreshBuildingPositions.Count));
             var netCandidates = new List<Entity>(128);
             var restoredRoadCurves = new List<RestoredRoadCurve>(Math.Max(16, m_UndoRefreshNetPositions.Count));
             const float roadCurveCellSize = 64f;
             var roadCurveGrid = new Dictionary<long, List<int>>();
             float objMinX = minX, objMaxX = maxX, objMinZ = minZ, objMaxZ = maxZ;
+            const float netSearchPad = 96f;
+            float netSearchMinX = minX - netSearchPad;
+            float netSearchMaxX = maxX + netSearchPad;
+            float netSearchMinZ = minZ - netSearchPad;
+            float netSearchMaxZ = maxZ + netSearchPad;
 
-            // Stage 1: Resolve live restored road edges + roads adjacent to restored buildings first,
-            // collecting the exact live Bezier curves/bounds of every restored road so Stage 2 can
-            // reconnect surviving roadside buildings that were NOT deleted along with the road.
+            // Stage 1: Resolve live restored road edges first and collect standalone street candidates
+            // + exact live Bezier curves so Stage 2 can reconnect surviving roadside buildings and
+            // Stage 3 can refresh external street edges adjacent to restored buildings.
             var netSearch = World.GetExistingSystemManaged<Game.Net.SearchSystem>();
             if (netSearch != null)
             {
@@ -2850,10 +3036,10 @@ namespace MarqueeDelete
                 deps.Complete();
                 var iter = new AabbEntityCollectIterator
                 {
-                    MinX = minX - 64f,
-                    MaxX = maxX + 64f,
-                    MinZ = minZ - 64f,
-                    MaxZ = maxZ + 64f,
+                    MinX = netSearchMinX,
+                    MaxX = netSearchMaxX,
+                    MinZ = netSearchMinZ,
+                    MaxZ = netSearchMaxZ,
                     Results = netCandidates,
                 };
                 tree.Iterate(ref iter);
@@ -2864,9 +3050,19 @@ namespace MarqueeDelete
                     Entity edge = netCandidates[i];
                     if (!EntityManager.Exists(edge) ||
                         EntityManager.HasComponent<Deleted>(edge) ||
-                        EntityManager.HasComponent<Temp>(edge) ||
-                        !EntityManager.HasComponent<Edge>(edge) ||
-                        !EntityManager.HasComponent<Curve>(edge))
+                        EntityManager.HasComponent<Temp>(edge))
+                    {
+                        continue;
+                    }
+
+                    if (!EntityManager.HasComponent<Edge>(edge) || !EntityManager.HasComponent<Curve>(edge))
+                    {
+                        continue;
+                    }
+
+                    CollectStandaloneEdge(edge, candidateStandaloneEdges, candidateStandaloneEdgeSet);
+
+                    if (netGrid.Count == 0 || IsOwnedInternalNet(edge))
                     {
                         continue;
                     }
@@ -2874,84 +3070,53 @@ namespace MarqueeDelete
                     Bezier4x3 c = EntityManager.GetComponentData<Curve>(edge).m_Bezier;
                     float3 mid = 0.125f * c.a + 0.375f * c.b + 0.375f * c.c + 0.125f * c.d;
                     bool matchedRestoredNet = false;
-                    bool matchedNearBuilding = false;
 
-                    if (netGrid.Count > 0)
+                    int ncx = (int)math.floor(mid.x / netCellSize);
+                    int ncz = (int)math.floor(mid.z / netCellSize);
+                    for (int dx = -1; dx <= 1 && !matchedRestoredNet; dx++)
                     {
-                        int ncx = (int)math.floor(mid.x / netCellSize);
-                        int ncz = (int)math.floor(mid.z / netCellSize);
-                        for (int dx = -1; dx <= 1 && !matchedRestoredNet; dx++)
+                        for (int dz = -1; dz <= 1 && !matchedRestoredNet; dz++)
                         {
-                            for (int dz = -1; dz <= 1 && !matchedRestoredNet; dz++)
+                            if (!netGrid.TryGetValue(RefreshCellKeyInt(ncx + dx, ncz + dz), out var bucket)) continue;
+                            for (int j = 0; j < bucket.Count; j++)
                             {
-                                if (!netGrid.TryGetValue(RefreshCellKeyInt(ncx + dx, ncz + dz), out var bucket)) continue;
-                                for (int j = 0; j < bucket.Count; j++)
+                                if (math.distancesq(mid, bucket[j]) <= 9.0f)
                                 {
-                                    if (math.distancesq(mid, bucket[j]) <= 9.0f)
-                                    {
-                                        matchedRestoredNet = true;
-                                        break;
-                                    }
+                                    matchedRestoredNet = true;
+                                    break;
                                 }
                             }
                         }
                     }
 
-                    if (!matchedRestoredNet && bldGrid.Count > 0)
-                    {
-                        int bcx = (int)math.floor(mid.x / bldCellSize);
-                        int bcz = (int)math.floor(mid.z / bldCellSize);
-                        for (int dx = -1; dx <= 1 && !matchedNearBuilding; dx++)
-                        {
-                            for (int dz = -1; dz <= 1 && !matchedNearBuilding; dz++)
-                            {
-                                if (!bldGrid.TryGetValue(RefreshCellKeyInt(bcx + dx, bcz + dz), out var bucket)) continue;
-                                for (int j = 0; j < bucket.Count; j++)
-                                {
-                                    float3 target = bucket[j];
-                                    if (math.distancesq(mid, target) <= 1024f ||
-                                        math.distancesq(c.a, target) <= 1024f ||
-                                        math.distancesq(c.d, target) <= 1024f)
-                                    {
-                                        matchedNearBuilding = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (matchedRestoredNet || matchedNearBuilding)
+                    if (matchedRestoredNet)
                     {
                         MarkEntityUpdated(ecb, marked, edge);
                         Edge edgeComp = EntityManager.GetComponentData<Edge>(edge);
                         MarkEntityUpdated(ecb, marked, edgeComp.m_Start);
                         MarkEntityUpdated(ecb, marked, edgeComp.m_End);
-                        if (matchedRestoredNet)
+                        MarkConnectedBoundaryEdges(ecb, marked, edgeComp.m_Start);
+                        MarkConnectedBoundaryEdges(ecb, marked, edgeComp.m_End);
+
+                        Bounds3 roadBounds = MathUtils.Bounds(c);
+                        int curveIdx = restoredRoadCurves.Count;
+                        restoredRoadCurves.Add(new RestoredRoadCurve { Curve = c, Bounds = roadBounds });
+                        if (roadBounds.min.x < objMinX) objMinX = roadBounds.min.x;
+                        if (roadBounds.max.x > objMaxX) objMaxX = roadBounds.max.x;
+                        if (roadBounds.min.z < objMinZ) objMinZ = roadBounds.min.z;
+                        if (roadBounds.max.z > objMaxZ) objMaxZ = roadBounds.max.z;
+
+                        int rMinX = (int)math.floor((roadBounds.min.x - UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
+                        int rMaxX = (int)math.floor((roadBounds.max.x + UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
+                        int rMinZ = (int)math.floor((roadBounds.min.z - UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
+                        int rMaxZ = (int)math.floor((roadBounds.max.z + UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
+                        for (int rx = rMinX; rx <= rMaxX; rx++)
                         {
-                            MarkConnectedBoundaryEdges(ecb, marked, edgeComp.m_Start);
-                            MarkConnectedBoundaryEdges(ecb, marked, edgeComp.m_End);
-
-                            Bounds3 roadBounds = MathUtils.Bounds(c);
-                            int curveIdx = restoredRoadCurves.Count;
-                            restoredRoadCurves.Add(new RestoredRoadCurve { Curve = c, Bounds = roadBounds });
-                            if (roadBounds.min.x < objMinX) objMinX = roadBounds.min.x;
-                            if (roadBounds.max.x > objMaxX) objMaxX = roadBounds.max.x;
-                            if (roadBounds.min.z < objMinZ) objMinZ = roadBounds.min.z;
-                            if (roadBounds.max.z > objMaxZ) objMaxZ = roadBounds.max.z;
-
-                            int rMinX = (int)math.floor((roadBounds.min.x - UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
-                            int rMaxX = (int)math.floor((roadBounds.max.x + UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
-                            int rMinZ = (int)math.floor((roadBounds.min.z - UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
-                            int rMaxZ = (int)math.floor((roadBounds.max.z + UndoRefreshLogic.RoadNeighborCenterRadius) / roadCurveCellSize);
-                            for (int rx = rMinX; rx <= rMaxX; rx++)
+                            for (int rz = rMinZ; rz <= rMaxZ; rz++)
                             {
-                                for (int rz = rMinZ; rz <= rMaxZ; rz++)
-                                {
-                                    long rKey = RefreshCellKeyInt(rx, rz);
-                                    if (!roadCurveGrid.TryGetValue(rKey, out var rBucket)) roadCurveGrid[rKey] = rBucket = new List<int>(4);
-                                    rBucket.Add(curveIdx);
-                                }
+                                long rKey = RefreshCellKeyInt(rx, rz);
+                                if (!roadCurveGrid.TryGetValue(rKey, out var rBucket)) roadCurveGrid[rKey] = rBucket = new List<int>(4);
+                                rBucket.Add(curveIdx);
                             }
                         }
                     }
@@ -2959,9 +3124,8 @@ namespace MarqueeDelete
             }
 
             // Stage 2: Refresh ALL restored buildings AND all surviving buildings/SubNet hosts adjacent
-            // to restored roads so RoadConnectionSystem, GenerateEdgesSystem (LocalConnect),
-            // ReferencesSystem, LaneConnectionSystem, SpawnLocationConnectionSystem, and
-            // ConnectionWarningSystem reconnect them in the same Modification cycle.
+            // to restored roads (marking buildings, SpawnLocations, and LocalConnect SubNet nodes Updated,
+            // while never marking owned internal SubNet edges Updated).
             m_UndoDiagBuildingPositions.Clear();
             m_UndoDiagRestoredCount = 0;
             m_UndoDiagNeighborCount = 0;
@@ -3084,17 +3248,104 @@ namespace MarqueeDelete
 
                         if (matchedRestored || matchedRoadNeighbor)
                         {
-                            MarkBuildingGraphUpdated(ecb, marked, entity, includeUpgrades: true);
+                            MarkBuildingGraphUpdated(
+                                ecb,
+                                marked,
+                                entity,
+                                includeUpgrades: true,
+                                depth: 0,
+                                buildingLocalConnectNodes,
+                                buildingLocalConnectSet,
+                                directStreetEdges,
+                                directStreetEdgeSet);
                             if (isBuilding)
                             {
                                 m_UndoDiagBuildingPositions.Add(pos);
-                                if (matchedRestored) m_UndoDiagRestoredCount++;
-                                else m_UndoDiagNeighborCount++;
+                                if (matchedRestored)
+                                {
+                                    m_UndoDiagRestoredCount++;
+                                    restoredBuildingEntries.Add(new RestoredBuildingEntry { Position = pos, Bounds = entry.Bounds });
+                                }
+                                else
+                                {
+                                    m_UndoDiagNeighborCount++;
+                                }
                             }
                         }
                     }
                 }
             }
+
+            // Stage 3: Mark external standalone street edges adjacent to restored buildings / SubNet
+            // LocalConnect nodes Updated so vanilla GenerateEdgesSystem::UpdateNodeConnections,
+            // ReferencesSystem::RationalizeConnectedNodesJob, LaneSystem, and ConnectionWarningSystem
+            // reconnect pedestrian/vehicle entrances using vanilla validation without deforming internals.
+            if (netSearch != null && (buildingLocalConnectNodes.Count > 0 || restoredBuildingEntries.Count > 0))
+            {
+                bool hasOverflow = false;
+                float ovMinX = float.MaxValue, ovMaxX = float.MinValue;
+                float ovMinZ = float.MaxValue, ovMaxZ = float.MinValue;
+                const float extraMargin = 32f;
+
+                for (int i = 0; i < buildingLocalConnectNodes.Count; i++)
+                {
+                    Entity n = buildingLocalConnectNodes[i];
+                    if (!EntityManager.HasComponent<Game.Net.Node>(n)) continue;
+                    float3 np = EntityManager.GetComponentData<Game.Net.Node>(n).m_Position;
+                    if (np.x - extraMargin < netSearchMinX || np.x + extraMargin > netSearchMaxX ||
+                        np.z - extraMargin < netSearchMinZ || np.z + extraMargin > netSearchMaxZ)
+                    {
+                        hasOverflow = true;
+                        if (np.x - extraMargin < ovMinX) ovMinX = np.x - extraMargin;
+                        if (np.x + extraMargin > ovMaxX) ovMaxX = np.x + extraMargin;
+                        if (np.z - extraMargin < ovMinZ) ovMinZ = np.z - extraMargin;
+                        if (np.z + extraMargin > ovMaxZ) ovMaxZ = np.z + extraMargin;
+                    }
+                }
+                for (int i = 0; i < restoredBuildingEntries.Count; i++)
+                {
+                    Bounds3 b = restoredBuildingEntries[i].Bounds;
+                    if (b.min.x - extraMargin < netSearchMinX || b.max.x + extraMargin > netSearchMaxX ||
+                        b.min.z - extraMargin < netSearchMinZ || b.max.z + extraMargin > netSearchMaxZ)
+                    {
+                        hasOverflow = true;
+                        if (b.min.x - extraMargin < ovMinX) ovMinX = b.min.x - extraMargin;
+                        if (b.max.x + extraMargin > ovMaxX) ovMaxX = b.max.x + extraMargin;
+                        if (b.min.z - extraMargin < ovMinZ) ovMinZ = b.min.z - extraMargin;
+                        if (b.max.z + extraMargin > ovMaxZ) ovMaxZ = b.max.z + extraMargin;
+                    }
+                }
+
+                if (hasOverflow)
+                {
+                    netCandidates.Clear();
+                    var tree = netSearch.GetNetSearchTree(true, out JobHandle deps);
+                    deps.Complete();
+                    var iter = new AabbEntityCollectIterator
+                    {
+                        MinX = ovMinX,
+                        MaxX = ovMaxX,
+                        MinZ = ovMinZ,
+                        MaxZ = ovMaxZ,
+                        Results = netCandidates,
+                    };
+                    tree.Iterate(ref iter);
+                    netSearch.AddNetSearchTreeReader(default(JobHandle));
+                    for (int i = 0; i < netCandidates.Count; i++)
+                    {
+                        CollectStandaloneEdge(netCandidates[i], candidateStandaloneEdges, candidateStandaloneEdgeSet);
+                    }
+                }
+            }
+
+            m_UndoDiagLocalConnectNodes = buildingLocalConnectNodes.Count;
+            m_UndoDiagStreetsRefreshed = MarkAdjacentStandaloneStreetsUpdated(
+                ecb,
+                marked,
+                directStreetEdges,
+                buildingLocalConnectNodes,
+                restoredBuildingEntries,
+                candidateStandaloneEdges);
 
             if (m_UndoDiagBuildingPositions.Count > 0)
             {
@@ -3103,6 +3354,358 @@ namespace MarqueeDelete
 
             m_UndoRefreshBuildingPositions.Clear();
             m_UndoRefreshNetPositions.Clear();
+        }
+
+        private struct RestoredBuildingEntry
+        {
+            public float3 Position;
+            public Bounds3 Bounds;
+        }
+
+        private struct LocalConnectCandidate
+        {
+            public Entity Entity;
+            public float3 Position;
+            public float Radius;
+            public Bounds1 HeightRange;
+            public Bounds3 Bounds;
+            public int ConnectLayers;
+            public int LocalConnectLayers;
+            public bool IsStandalone;
+        }
+
+        private int MarkAdjacentStandaloneStreetsUpdated(
+            EntityCommandBuffer ecb,
+            HashSet<Entity> marked,
+            List<Entity> directStreetEdges,
+            List<Entity> buildingLocalConnectNodes,
+            List<RestoredBuildingEntry> restoredBuildingEntries,
+            List<Entity> candidateStandaloneEdges)
+        {
+            int refreshed = 0;
+
+            for (int i = 0; i < directStreetEdges.Count; i++)
+            {
+                Entity street = directStreetEdges[i];
+                if (!EntityManager.Exists(street) ||
+                    EntityManager.HasComponent<Deleted>(street) ||
+                    EntityManager.HasComponent<Temp>(street) ||
+                    !EntityManager.HasComponent<Edge>(street) ||
+                    IsOwnedInternalNet(street))
+                {
+                    continue;
+                }
+
+                Edge edgeComp = EntityManager.GetComponentData<Edge>(street);
+                bool added = marked.Contains(street) ? false : true;
+                MarkEntityUpdated(ecb, marked, street);
+                MarkEntityUpdated(ecb, marked, edgeComp.m_Start);
+                MarkEntityUpdated(ecb, marked, edgeComp.m_End);
+                if (added) refreshed++;
+            }
+
+            if (candidateStandaloneEdges.Count == 0 ||
+                (buildingLocalConnectNodes.Count == 0 && restoredBuildingEntries.Count == 0))
+            {
+                return refreshed;
+            }
+
+            var nodes = new List<LocalConnectCandidate>(buildingLocalConnectNodes.Count);
+            for (int i = 0; i < buildingLocalConnectNodes.Count; i++)
+            {
+                Entity n = buildingLocalConnectNodes[i];
+                if (!EntityManager.Exists(n) ||
+                    EntityManager.HasComponent<Deleted>(n) ||
+                    EntityManager.HasComponent<Temp>(n) ||
+                    !EntityManager.HasComponent<Game.Net.Node>(n) ||
+                    !EntityManager.HasComponent<Game.Net.LocalConnect>(n) ||
+                    !EntityManager.HasComponent<PrefabRef>(n))
+                {
+                    continue;
+                }
+
+                Entity prefab = EntityManager.GetComponentData<PrefabRef>(n).m_Prefab;
+                if (prefab == Entity.Null ||
+                    !EntityManager.Exists(prefab) ||
+                    !EntityManager.HasComponent<LocalConnectData>(prefab) ||
+                    !EntityManager.HasComponent<NetData>(prefab) ||
+                    !EntityManager.HasComponent<NetGeometryData>(prefab))
+                {
+                    continue;
+                }
+
+                LocalConnectData lcData = EntityManager.GetComponentData<LocalConnectData>(prefab);
+                NetData netData = EntityManager.GetComponentData<NetData>(prefab);
+                NetGeometryData netGeo = EntityManager.GetComponentData<NetGeometryData>(prefab);
+                float3 pos = EntityManager.GetComponentData<Game.Net.Node>(n).m_Position;
+                float radius = UndoRefreshLogic.ComputeLocalConnectRadius(netGeo.m_DefaultWidth, lcData.m_SearchDistance);
+                bool isStandalone = !EntityManager.HasComponent<Owner>(n) ||
+                                    lcData.m_SearchDistance == 0f ||
+                                    (netGeo.m_Flags & GeometryFlags.SubOwner) != 0;
+                Bounds3 bounds = new Bounds3(pos - radius, pos + radius);
+                bounds.y = pos.y + lcData.m_HeightRange;
+
+                nodes.Add(new LocalConnectCandidate
+                {
+                    Entity = n,
+                    Position = pos,
+                    Radius = radius,
+                    HeightRange = lcData.m_HeightRange,
+                    Bounds = bounds,
+                    ConnectLayers = (int)netData.m_ConnectLayers,
+                    LocalConnectLayers = (int)lcData.m_Layers,
+                    IsStandalone = isStandalone,
+                });
+            }
+
+            for (int i = 0; i < candidateStandaloneEdges.Count; i++)
+            {
+                Entity e = candidateStandaloneEdges[i];
+                if (marked.Contains(e)) continue;
+                if (!EntityManager.Exists(e) ||
+                    EntityManager.HasComponent<Deleted>(e) ||
+                    EntityManager.HasComponent<Temp>(e) ||
+                    !EntityManager.HasComponent<Edge>(e) ||
+                    !EntityManager.HasComponent<Curve>(e) ||
+                    !EntityManager.HasComponent<PrefabRef>(e) ||
+                    !EntityManager.HasBuffer<Game.Net.ConnectedNode>(e) ||
+                    IsOwnedInternalNet(e))
+                {
+                    continue;
+                }
+
+                Entity prefab = EntityManager.GetComponentData<PrefabRef>(e).m_Prefab;
+                if (prefab == Entity.Null ||
+                    !EntityManager.Exists(prefab) ||
+                    !EntityManager.HasComponent<NetData>(prefab) ||
+                    !EntityManager.HasComponent<NetGeometryData>(prefab))
+                {
+                    continue;
+                }
+
+                Edge edgeComp = EntityManager.GetComponentData<Edge>(e);
+                Bezier4x3 bezier = EntityManager.GetComponentData<Curve>(e).m_Bezier;
+                Bounds3 curveBounds = MathUtils.Bounds(bezier);
+                NetData eNetData = EntityManager.GetComponentData<NetData>(prefab);
+                NetGeometryData eNetGeo = EntityManager.GetComponentData<NetGeometryData>(prefab);
+                bool isRoad = EntityManager.HasComponent<RoadData>(prefab);
+                bool edgeIsZoneable = isRoad &&
+                                      (EntityManager.GetComponentData<RoadData>(prefab).m_Flags & Game.Prefabs.RoadFlags.EnableZoning) != 0;
+
+                bool matchedStreet = false;
+
+                if (nodes.Count > 0)
+                {
+                    float expand = eNetGeo.m_DefaultWidth * 0.5f + (edgeIsZoneable ? UndoRefreshLogic.ZoneableLocalConnectMargin : 0f);
+                    Bounds3 edgeBounds = MathUtils.Expand(curveBounds, new float3(expand));
+
+                    float3 startPos = float3.zero;
+                    float startRoundaboutRadius = 0f;
+                    if (edgeComp.m_Start != Entity.Null &&
+                        EntityManager.HasComponent<Game.Net.Roundabout>(edgeComp.m_Start) &&
+                        EntityManager.HasComponent<Game.Net.Node>(edgeComp.m_Start))
+                    {
+                        startRoundaboutRadius = EntityManager.GetComponentData<Game.Net.Roundabout>(edgeComp.m_Start).m_Radius;
+                        if (startRoundaboutRadius > 0f)
+                        {
+                            startPos = EntityManager.GetComponentData<Game.Net.Node>(edgeComp.m_Start).m_Position;
+                            edgeBounds |= new Bounds3(startPos - startRoundaboutRadius, startPos + startRoundaboutRadius);
+                        }
+                    }
+
+                    float3 endPos = float3.zero;
+                    float endRoundaboutRadius = 0f;
+                    if (edgeComp.m_End != Entity.Null &&
+                        EntityManager.HasComponent<Game.Net.Roundabout>(edgeComp.m_End) &&
+                        EntityManager.HasComponent<Game.Net.Node>(edgeComp.m_End))
+                    {
+                        endRoundaboutRadius = EntityManager.GetComponentData<Game.Net.Roundabout>(edgeComp.m_End).m_Radius;
+                        if (endRoundaboutRadius > 0f)
+                        {
+                            endPos = EntityManager.GetComponentData<Game.Net.Node>(edgeComp.m_End).m_Position;
+                            edgeBounds |= new Bounds3(endPos - endRoundaboutRadius, endPos + endRoundaboutRadius);
+                        }
+                    }
+
+                    bool noEdgeConnection = (eNetGeo.m_Flags & GeometryFlags.NoEdgeConnection) != 0;
+                    int edgeConnectLayers = (int)eNetData.m_ConnectLayers;
+                    int edgeLocalConnectLayers = (int)eNetData.m_LocalConnectLayers;
+
+                    for (int j = 0; j < nodes.Count; j++)
+                    {
+                        LocalConnectCandidate n = nodes[j];
+                        if (edgeComp.m_Start == n.Entity || edgeComp.m_End == n.Entity) continue;
+                        if ((n.LocalConnectLayers & edgeConnectLayers) == 0 ||
+                            (n.ConnectLayers & edgeLocalConnectLayers) == 0)
+                        {
+                            continue;
+                        }
+                        if (!MathUtils.Intersect(edgeBounds, n.Bounds)) continue;
+
+                        float rawDistXZ;
+                        float t;
+                        if (noEdgeConnection)
+                        {
+                            float dStart = math.distance(bezier.a.xz, n.Position.xz);
+                            float dEnd = math.distance(bezier.d.xz, n.Position.xz);
+                            if (dEnd < dStart)
+                            {
+                                rawDistXZ = dEnd;
+                                t = 1f;
+                            }
+                            else
+                            {
+                                rawDistXZ = dStart;
+                                t = 0f;
+                            }
+                        }
+                        else
+                        {
+                            rawDistXZ = MathUtils.Distance(bezier.xz, n.Position.xz, out t);
+                        }
+
+                        float minRoundaboutDist = float.MaxValue;
+                        if (startRoundaboutRadius > 0f)
+                        {
+                            float rDist = math.distance(startPos.xz, n.Position.xz) - startRoundaboutRadius;
+                            if (rDist < rawDistXZ - eNetGeo.m_DefaultWidth * 0.5f && rDist < minRoundaboutDist)
+                            {
+                                minRoundaboutDist = rDist;
+                                t = 0f;
+                            }
+                        }
+                        if (endRoundaboutRadius > 0f)
+                        {
+                            float rDist = math.distance(endPos.xz, n.Position.xz) - endRoundaboutRadius;
+                            if (rDist < rawDistXZ - eNetGeo.m_DefaultWidth * 0.5f && rDist < minRoundaboutDist)
+                            {
+                                minRoundaboutDist = rDist;
+                                t = 1f;
+                            }
+                        }
+
+                        float diffY = MathUtils.Position(bezier, t).y - n.Position.y;
+                        if (UndoRefreshLogic.IsLocalConnectMatch(
+                                n.ConnectLayers,
+                                n.LocalConnectLayers,
+                                edgeConnectLayers,
+                                edgeLocalConnectLayers,
+                                rawDistXZ,
+                                eNetGeo.m_DefaultWidth,
+                                minRoundaboutDist,
+                                n.IsStandalone,
+                                edgeIsStandalone: true,
+                                edgeIsZoneable,
+                                n.Radius,
+                                diffY,
+                                n.HeightRange.min,
+                                n.HeightRange.max))
+                        {
+                            matchedStreet = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!matchedStreet && isRoad && restoredBuildingEntries.Count > 0)
+                {
+                    for (int b = 0; b < restoredBuildingEntries.Count; b++)
+                    {
+                        RestoredBuildingEntry rb = restoredBuildingEntries[b];
+                        if (!UndoRefreshLogic.BoundsOverlapXZ(
+                                rb.Bounds.min.x, rb.Bounds.max.x, rb.Bounds.min.z, rb.Bounds.max.z,
+                                curveBounds.min.x, curveBounds.max.x, curveBounds.min.z, curveBounds.max.z,
+                                UndoRefreshLogic.RoadNeighborCenterRadius))
+                        {
+                            continue;
+                        }
+
+                        float centerDist = MathUtils.Distance(bezier.xz, rb.Position.xz, out float tCenter);
+                        float3 closestOnRoad = MathUtils.Position(bezier, tCenter);
+                        float2 clampedBounds = math.clamp(closestOnRoad.xz, rb.Bounds.min.xz, rb.Bounds.max.xz);
+                        float boundsDist = MathUtils.Distance(bezier.xz, clampedBounds, out _);
+                        if (UndoRefreshLogic.IsBuildingAdjacentToRoad(centerDist, boundsDist, hasNoRoadEdge: false))
+                        {
+                            matchedStreet = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (matchedStreet)
+                {
+                    MarkEntityUpdated(ecb, marked, e);
+                    MarkEntityUpdated(ecb, marked, edgeComp.m_Start);
+                    MarkEntityUpdated(ecb, marked, edgeComp.m_End);
+                    refreshed++;
+                }
+            }
+
+            return refreshed;
+        }
+
+        private int CountBuildingExternalLocalLinks(Entity root, HashSet<Entity> seenNodes, int depth = 0)
+        {
+            int links = 0;
+            if (EntityManager.HasBuffer<Game.Net.SubNet>(root))
+            {
+                var subNets = EntityManager.GetBuffer<Game.Net.SubNet>(root, true);
+                for (int i = 0; i < subNets.Length; i++)
+                {
+                    Entity subNet = subNets[i].m_SubNet;
+                    if (subNet == Entity.Null || !EntityManager.Exists(subNet) || EntityManager.HasComponent<Deleted>(subNet)) continue;
+                    if (EntityManager.HasComponent<Edge>(subNet))
+                    {
+                        Edge edge = EntityManager.GetComponentData<Edge>(subNet);
+                        links += CountNodeExternalEdgeLinks(edge.m_Start, seenNodes);
+                        links += CountNodeExternalEdgeLinks(edge.m_End, seenNodes);
+                    }
+                    else if (EntityManager.HasComponent<Game.Net.Node>(subNet))
+                    {
+                        links += CountNodeExternalEdgeLinks(subNet, seenNodes);
+                    }
+                }
+            }
+            if (depth == 0 && EntityManager.HasBuffer<Game.Buildings.InstalledUpgrade>(root))
+            {
+                var upgrades = EntityManager.GetBuffer<Game.Buildings.InstalledUpgrade>(root, true);
+                for (int i = 0; i < upgrades.Length; i++)
+                {
+                    Entity upg = upgrades[i].m_Upgrade;
+                    if (upg != Entity.Null && EntityManager.Exists(upg) && !EntityManager.HasComponent<Deleted>(upg))
+                    {
+                        links += CountBuildingExternalLocalLinks(upg, seenNodes, depth + 1);
+                    }
+                }
+            }
+            return links;
+        }
+
+        private int CountNodeExternalEdgeLinks(Entity node, HashSet<Entity> seenNodes)
+        {
+            if (node == Entity.Null || !EntityManager.Exists(node) ||
+                EntityManager.HasComponent<Deleted>(node) ||
+                !EntityManager.HasComponent<Game.Net.LocalConnect>(node) ||
+                !seenNodes.Add(node) ||
+                !EntityManager.HasBuffer<ConnectedEdge>(node))
+            {
+                return 0;
+            }
+
+            int links = 0;
+            var connected = EntityManager.GetBuffer<ConnectedEdge>(node, true);
+            for (int i = 0; i < connected.Length; i++)
+            {
+                Entity ce = connected[i].m_Edge;
+                if (ce != Entity.Null && EntityManager.Exists(ce) &&
+                    !EntityManager.HasComponent<Deleted>(ce) &&
+                    !EntityManager.HasComponent<Temp>(ce) &&
+                    !IsOwnedInternalNet(ce))
+                {
+                    links++;
+                }
+            }
+            return links;
         }
 
         private void LogUndoRefreshDiagnostics()
@@ -3161,9 +3764,11 @@ namespace MarqueeDelete
                 int matchedBuildings = 0;
                 int noRoadEdge = 0;
                 int unlinkedSpawns = 0;
+                int connectedLinks = 0;
                 int carWarns = 0;
                 int pedWarns = 0;
                 int roadWarns = 0;
+                var seenLinkNodes = new HashSet<Entity>(32);
 
                 for (int i = 0; i < candidates.Count; i++)
                 {
@@ -3216,11 +3821,13 @@ namespace MarqueeDelete
                             }
                         }
                     }
+                    connectedLinks += CountBuildingExternalLocalLinks(entity, seenLinkNodes);
                     CountConnectionIcons(entity, carWarnPrefab, pedWarnPrefab, roadWarnPrefab, ref carWarns, ref pedWarns, ref roadWarns);
                 }
 
                 AppendStatusLine(
                     $"[State: undo-refresh-check, Buildings: {matchedBuildings}, RestoredBld: {m_UndoDiagRestoredCount}, NeighborBld: {m_UndoDiagNeighborCount}, " +
+                    $"StreetsRefreshed: {m_UndoDiagStreetsRefreshed}, LocalConnectNodes: {m_UndoDiagLocalConnectNodes}, ConnectedLinks: {connectedLinks}, " +
                     $"NoRoadEdge: {noRoadEdge}, UnlinkedSpawns: {unlinkedSpawns}, CarWarn: {carWarns}, PedWarn: {pedWarns}, RoadWarn: {roadWarns}]");
             }
             catch (Exception ex)

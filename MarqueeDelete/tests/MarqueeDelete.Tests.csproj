@@ -11,6 +11,7 @@
     <Compile Include="MarqueeDelete.Tests.cs" />
     <Compile Include="..\AssetOverlayLogic.cs" Link="AssetOverlayLogic.cs" />
     <Compile Include="..\ColorLibrary.cs" Link="ColorLibrary.cs" />
+    <Compile Include="..\GlobalUndoPolicy.cs" Link="GlobalUndoPolicy.cs" />
     <Compile Include="..\SelectionLogic.cs" Link="SelectionLogic.cs" />
     <Compile Include="..\SelectiveUndoLogic.cs" Link="SelectiveUndoLogic.cs" />
     <Compile Include="..\UndoBatchPolicy.cs" Link="UndoBatchPolicy.cs" />

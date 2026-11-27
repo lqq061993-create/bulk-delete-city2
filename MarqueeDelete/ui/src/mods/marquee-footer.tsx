@@ -64,7 +64,7 @@ function createParticleSpecs(count: number, minSize: number, maxSize: number, mi
     return list;
 }
 
-function UndoProgressBanner(props: {
+export function UndoProgressBanner(props: {
     restoredCount: number;
     skippedCount: number;
     totalCount: number;

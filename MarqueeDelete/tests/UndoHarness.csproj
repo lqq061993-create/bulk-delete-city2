@@ -13,6 +13,8 @@
     <Compile Include="../DeletionPolicies.cs" Link="DeletionPolicies.cs"/>
     <Compile Include="../Compatibility.cs" Link="Compatibility.cs"/>
     <Compile Include="../DeletionUndo.cs" Link="DeletionUndo.cs"/>
+    <Compile Include="../GlobalUndo.cs" Link="GlobalUndo.cs"/>
+    <Compile Include="../GlobalUndoPolicy.cs" Link="GlobalUndoPolicy.cs"/>
     <Compile Include="../SelectiveUndoLogic.cs" Link="SelectiveUndoLogic.cs"/>
     <Compile Include="../UndoBatchPolicy.cs" Link="UndoBatchPolicy.cs"/>
     <Compile Include="../SelectionLogic.cs" Link="SelectionLogic.cs"/>

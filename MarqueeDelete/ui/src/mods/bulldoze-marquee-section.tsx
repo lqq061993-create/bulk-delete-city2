@@ -21,6 +21,7 @@ import {
     countProps$,
     countResidential$,
     countTrees$,
+    globalUndoPanelOpen$,
     importantModalOpen$,
     optPanelGlow$,
     roadFacilitiesBusy$,
@@ -54,6 +55,7 @@ import {
     COLOR_PALETTE_ICON,
     CONFIRM_ICON,
     FilterCountBadge,
+    GEMINI_UNDO_ICON,
     GLOW_ICON,
     hslToRgbaCss,
     ICON_AREAS,
@@ -90,6 +92,7 @@ export const ALL_PRELOAD_ICONS: string[] = [
     CLEAR_FILTERS_ICON,
     COLOR_PALETTE_ICON,
     UNDO_ICON,
+    GEMINI_UNDO_ICON,
     UNDO_FX_ICON,
     INFO_ICON,
     GLOW_ICON,
@@ -121,6 +124,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
     const palette = useColorPalette();
     const colorModalOpen = useColorModalOpen();
     const importantModalOpen = useValue(importantModalOpen$);
+    const globalUndoPanelOpen = useValue(globalUndoPanelOpen$);
     const roadFacilityMode = useValue(roadFacilityMode$);
     const roadFacilitiesBusy = useValue(roadFacilitiesBusy$);
     const editingRoadFacilities = roadFacilityMode !== 0;
@@ -295,8 +299,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
                         {state.selectionMode === 2 && t("MarqueeDelete.DescSelectionModeFreehand", "Freehand stroke selection: hold left mouse button to draw, release to auto-close.")}
                     </div>
                     <div className={styles.modeInfoHotkeys}>
-                        <span className={styles.modeInfoHotkeyTag}>Ctrl+Shift+X {t("MarqueeDelete.HotkeySwitchTool", "Switch Mode")}</span>
-                        <span className={styles.modeInfoHotkeyTag}>Shift+U {t("MarqueeDelete.HotkeyUnderground", "Underground")}</span>
+                        <span className={styles.modeInfoHotkeyTag}>Ctrl+Shift+X {t("MarqueeDelete.HotkeyToggleTool", "Toggle Bulk Delete")}</span>
                         <span className={styles.modeInfoHotkeyTag}>Enter {t("MarqueeDelete.HotkeyConfirm", "Confirm/Close")}</span>
                         <span className={styles.modeInfoHotkeyTag}>Esc {t("MarqueeDelete.HotkeyCancel", "Cancel/Clear")}</span>
                         <span className={styles.modeInfoHotkeyTag}>Ctrl+Z {t("MarqueeDelete.HotkeyUndo", "Undo")}</span>
@@ -648,7 +651,7 @@ export function BulldozeMarqueeSection(): JSX.Element {
                     underground={state.underground}
                     hasAnyFilter={hasAnyFilter}
                     hasUndergroundFilter={hasUndergroundFilter}
-                    modalOpen={colorModalOpen || importantModalOpen}
+                    modalOpen={colorModalOpen || importantModalOpen || globalUndoPanelOpen}
                     roadFacilityMode={roadFacilityMode}
                     undo={state.undo}
                     compatCanUndo={state.compatCanUndo}

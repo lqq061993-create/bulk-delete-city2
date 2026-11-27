@@ -50,6 +50,9 @@ namespace MarqueeDelete
         private int m_LastPushedColorRevision = int.MinValue;
         private bool m_HasLastUndoUi;
         private SelectiveUndoUiSnapshot m_LastUndoUi;
+        private GlobalUndoUiState m_LastGlobalUndoUi;
+        private bool m_GlobalUndoPanelOpen;
+        private bool m_LastGlobalUndoPanelOpen;
 
         private float m_LastWidthLabelX = -999f;
         private float m_LastWidthLabelY = -999f;
@@ -189,6 +192,20 @@ namespace MarqueeDelete
         private ValueBinding<int> m_UndoFinishedTotalCountBinding;
         private ValueBinding<int> m_UndoFinishedNotCapturedCountBinding;
         private ValueBinding<int> m_UndoCaptureFailedCountBinding;
+        private ValueBinding<bool> m_GlobalUndoEnabledBinding;
+        private ValueBinding<bool> m_GlobalUndoTrackBuildBinding;
+        private ValueBinding<bool> m_GlobalUndoTrackBulldozeBinding;
+        private ValueBinding<bool> m_GlobalUndoTrackUpgradeBinding;
+        private ValueBinding<bool> m_GlobalUndoTrackZoneBinding;
+        private ValueBinding<bool> m_GlobalUndoTrackTerrainBinding;
+        private ValueBinding<bool> m_GlobalUndoYieldingBinding;
+        private ValueBinding<string> m_GlobalUndoYieldingToolBinding;
+        private ValueBinding<string> m_GlobalUndoActiveKindBinding;
+        private ValueBinding<string> m_GlobalUndoTopKindBinding;
+        private ValueBinding<int> m_GlobalUndoTopCountBinding;
+        private ValueBinding<int> m_GlobalUndoTerrainMemKBBinding;
+        private ValueBinding<string> m_GlobalUndoHistoryJsonBinding;
+        private ValueBinding<bool> m_GlobalUndoPanelOpenBinding;
         private ValueBinding<string> m_ImpactReportRawBinding;
         private bool m_ImpactReportOpen;
         private ValueBinding<string> m_RestoreNoticeBinding;
@@ -335,6 +352,20 @@ namespace MarqueeDelete
             AddBinding(m_UndoFinishedTotalCountBinding = new ValueBinding<int>(Group, "undoFinishedTotalCount", 0));
             AddBinding(m_UndoFinishedNotCapturedCountBinding = new ValueBinding<int>(Group, "undoFinishedNotCapturedCount", 0));
             AddBinding(m_UndoCaptureFailedCountBinding = new ValueBinding<int>(Group, "undoCaptureFailedCount", 0));
+            AddBinding(m_GlobalUndoEnabledBinding = new ValueBinding<bool>(Group, "globalUndoEnabled", true));
+            AddBinding(m_GlobalUndoTrackBuildBinding = new ValueBinding<bool>(Group, "globalUndoTrackBuild", true));
+            AddBinding(m_GlobalUndoTrackBulldozeBinding = new ValueBinding<bool>(Group, "globalUndoTrackBulldoze", true));
+            AddBinding(m_GlobalUndoTrackUpgradeBinding = new ValueBinding<bool>(Group, "globalUndoTrackUpgrade", true));
+            AddBinding(m_GlobalUndoTrackZoneBinding = new ValueBinding<bool>(Group, "globalUndoTrackZone", true));
+            AddBinding(m_GlobalUndoTrackTerrainBinding = new ValueBinding<bool>(Group, "globalUndoTrackTerrain", true));
+            AddBinding(m_GlobalUndoYieldingBinding = new ValueBinding<bool>(Group, "globalUndoYielding", false));
+            AddBinding(m_GlobalUndoYieldingToolBinding = new ValueBinding<string>(Group, "globalUndoYieldingTool", string.Empty));
+            AddBinding(m_GlobalUndoActiveKindBinding = new ValueBinding<string>(Group, "globalUndoActiveKind", "none"));
+            AddBinding(m_GlobalUndoTopKindBinding = new ValueBinding<string>(Group, "globalUndoTopKind", "none"));
+            AddBinding(m_GlobalUndoTopCountBinding = new ValueBinding<int>(Group, "globalUndoTopCount", 0));
+            AddBinding(m_GlobalUndoTerrainMemKBBinding = new ValueBinding<int>(Group, "globalUndoTerrainMemKB", 0));
+            AddBinding(m_GlobalUndoHistoryJsonBinding = new ValueBinding<string>(Group, "globalUndoHistoryJson", "[]"));
+            AddBinding(m_GlobalUndoPanelOpenBinding = new ValueBinding<bool>(Group, "globalUndoPanelOpen", false));
             AddBinding(m_ColorModalOpenBinding = new ValueBinding<bool>(Group, "colorModalOpen", false));
             AddBinding(m_ColorPaletteJsonBinding = new ValueBinding<string>(Group, "colorPaletteJson", BuildCurrentColorPaletteJson()));
             m_LastPushedColorRevision = Mod.Settings != null ? Mod.Settings.GetColorRevision() : int.MinValue;
@@ -363,6 +394,9 @@ namespace MarqueeDelete
             AddBinding(new TriggerBinding(Group, "cancelUndo", OnCancelUndo));
             AddBinding(new TriggerBinding(Group, "stopUndo", OnStopUndo));
             AddBinding(new TriggerBinding(Group, "dismissUndoNotice", OnDismissUndoNotice));
+            AddBinding(new TriggerBinding(Group, "clearGlobalUndoHistory", OnClearGlobalUndoHistory));
+            AddBinding(new TriggerBinding(Group, "toggleGlobalUndoPanel", OnToggleGlobalUndoPanel));
+            AddBinding(new TriggerBinding<bool>(Group, "setGlobalUndoPanelOpen", OnSetGlobalUndoPanelOpen));
             AddBinding(new TriggerBinding<bool>(Group, "setColorModalOpen", OnSetColorModalOpen));
             AddBinding(new TriggerBinding<string, string>(Group, "setColor", OnSetColor));
             AddBinding(new TriggerBinding<string, float>(Group, "setAlpha", OnSetAlpha));
@@ -469,10 +503,22 @@ namespace MarqueeDelete
             Mod.ColorSaveCoordinator.Tick(UnityEngine.Time.unscaledDeltaTime);
 
             bool canUse = CanUseTool();
-            if (!canUse && m_Tool != null && m_Tool.ColorModalOpen)
+            if (!canUse)
             {
-                m_Tool.SetColorModalOpen(false);
-                m_Dirty = true;
+                if (m_GlobalUndoPanelOpen)
+                {
+                    m_GlobalUndoPanelOpen = false;
+                    m_Dirty = true;
+                }
+                if (m_Tool != null && m_Tool.ColorModalOpen)
+                {
+                    m_Tool.SetColorModalOpen(false);
+                    m_Dirty = true;
+                }
+            }
+            if (m_Tool != null)
+            {
+                m_Tool.GlobalUndoPanelOpen = m_GlobalUndoPanelOpen;
             }
 
             if (m_ColorPaletteDirty)
@@ -497,6 +543,22 @@ namespace MarqueeDelete
                     escapePressedThisFrame: escapePressedThisFrame))
             {
                 m_Tool.CloseColorModalFromUi();
+                m_Dirty = true;
+            }
+            else if (MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(
+                         m_Tool != null ? m_Tool.EscapeGate : null,
+                         UnityEngine.Time.frameCount,
+                         globalUndoPanelOpen: m_GlobalUndoPanelOpen,
+                         colorModalOpen: m_Tool != null && m_Tool.ColorModalOpen,
+                         importantModalOpen: m_Tool != null && m_Tool.ImportantModalOpen,
+                         allowInput: allowInput,
+                         escapePressedThisFrame: escapePressedThisFrame))
+            {
+                m_GlobalUndoPanelOpen = false;
+                if (m_Tool != null)
+                {
+                    m_Tool.GlobalUndoPanelOpen = false;
+                }
                 m_Dirty = true;
             }
             bool colorModalOpen = canUse && m_Tool != null && m_Tool.ColorModalOpen;
@@ -525,8 +587,9 @@ namespace MarqueeDelete
             bool pickSimilarArmed = active && m_Tool.PickSimilarArmed;
             colorModalOpen = canUse && m_Tool != null && m_Tool.ColorModalOpen;
             SelectiveUndoUiSnapshot undoUi = m_Tool != null ? m_Tool.GetUndoUiSnapshot() : default(SelectiveUndoUiSnapshot);
+            GlobalUndoUiState globalUndoUi = m_Tool != null ? m_Tool.GetGlobalUndoUiState() : default(GlobalUndoUiState);
 
-            bool canTriggerUndo = m_Tool != null && !m_Tool.IsEditingRoadFacilities && MarqueePointerLogic.CanTriggerUndo(
+            bool canTriggerUndo = m_Tool != null && !globalUndoUi.ExternalToolYielding && !m_Tool.IsEditingRoadFacilities && MarqueePointerLogic.CanTriggerUndo(
                 canUseMod: canUse,
                 allowInput: allowInput,
                 pointerIdle: !pointerBusy,
@@ -540,6 +603,7 @@ namespace MarqueeDelete
             {
                 OnUndo();
                 undoUi = m_Tool.GetUndoUiSnapshot();
+                globalUndoUi = m_Tool.GetGlobalUndoUiState();
             }
 
             // Idle fast-path: when neither Bulk Delete nor Bulldoze nor ColorModal is open and no
@@ -550,8 +614,10 @@ namespace MarqueeDelete
                                    !active && !m_LastActive &&
                                    !bulldozeActive && !m_LastBulldozeActive &&
                                    !colorModalOpen && !m_LastColorModalOpen &&
+                                   m_GlobalUndoPanelOpen == m_LastGlobalUndoPanelOpen &&
                                    !undoUi.IsInProgress && !undoUi.HasActiveUndo &&
                                    undoUi == m_LastUndoUi &&
+                                   globalUndoUi == m_LastGlobalUndoUi &&
                                    m_RestoreNoticeUntil <= 0f;
             if (isIdleUnchanged)
             {
@@ -671,7 +737,9 @@ namespace MarqueeDelete
                 resultRevision != m_LastResultRevision ||
                 shapeRevision != m_LastShapeRevision ||
                 finishedDrawingOrDragging ||
-                undoUi != m_LastUndoUi;
+                undoUi != m_LastUndoUi ||
+                globalUndoUi != m_LastGlobalUndoUi ||
+                m_GlobalUndoPanelOpen != m_LastGlobalUndoPanelOpen;
 
             if (!stateChanged && !coordsExceedDeadzone && !sizeExceedDeadzone)
             {
@@ -1105,6 +1173,63 @@ namespace MarqueeDelete
             }
         }
 
+        private void OnClearGlobalUndoHistory()
+        {
+            if (m_Tool == null || !CanUseTool())
+            {
+                return;
+            }
+
+            m_Tool.ClearGlobalUndoHistory();
+            m_Dirty = true;
+            SyncBindings();
+        }
+
+        private void OnToggleGlobalUndoPanel()
+        {
+            if (!CanUseTool())
+            {
+                m_GlobalUndoPanelOpen = false;
+            }
+            else
+            {
+                m_GlobalUndoPanelOpen = !m_GlobalUndoPanelOpen;
+            }
+            if (m_Tool != null)
+            {
+                m_Tool.GlobalUndoPanelOpen = m_GlobalUndoPanelOpen;
+            }
+            m_Dirty = true;
+            SyncBindings();
+        }
+
+        private void OnSetGlobalUndoPanelOpen(bool open)
+        {
+            bool wasOpen = m_GlobalUndoPanelOpen;
+            bool escapePressed = UnityEngine.InputSystem.Keyboard.current != null &&
+                                 UnityEngine.InputSystem.Keyboard.current.escapeKey.wasPressedThisFrame;
+            if (!MarqueePointerLogic.TryAcceptUiGlobalUndoClose(
+                    m_Tool != null ? m_Tool.EscapeGate : null,
+                    UnityEngine.Time.frameCount,
+                    wasOpen: wasOpen,
+                    targetOpen: open,
+                    colorModalOpen: m_Tool != null && m_Tool.ColorModalOpen,
+                    importantModalOpen: m_Tool != null && m_Tool.ImportantModalOpen,
+                    escapePressedThisFrame: escapePressed))
+            {
+                SyncBindings();
+                return;
+            }
+
+            m_GlobalUndoPanelOpen = open && CanUseTool();
+            if (m_Tool != null)
+            {
+                m_Tool.GlobalUndoPanelOpen = m_GlobalUndoPanelOpen;
+            }
+            m_Dirty = true;
+            SyncBindings();
+        }
+
         private void OnSoloFilter(string key)
         {
             Settings s = Mod.Settings;
@@ -1221,6 +1346,30 @@ namespace MarqueeDelete
                     break;
                 case "undoDecals":
                     s.UndoDecals = value;
+                    affectsSelection = false;
+                    break;
+                case "globalUndoEnabled":
+                    s.EnableGlobalUndo = value;
+                    affectsSelection = false;
+                    break;
+                case "undoTrackBuild":
+                    s.UndoTrackBuild = value;
+                    affectsSelection = false;
+                    break;
+                case "undoTrackBulldoze":
+                    s.UndoTrackBulldoze = value;
+                    affectsSelection = false;
+                    break;
+                case "undoTrackUpgrade":
+                    s.UndoTrackUpgrade = value;
+                    affectsSelection = false;
+                    break;
+                case "undoTrackZone":
+                    s.UndoTrackZone = value;
+                    affectsSelection = false;
+                    break;
+                case "undoTrackTerrain":
+                    s.UndoTrackTerrain = value;
                     affectsSelection = false;
                     break;
                 default:
@@ -1572,6 +1721,22 @@ namespace MarqueeDelete
             m_UndoFinishedNotCapturedCountBinding.Update(undoUi.FinishedNotCapturedCount);
             m_UndoCaptureFailedCountBinding.Update(canUse ? undoUi.CaptureFailedCount : 0);
 
+            GlobalUndoUiState globalUndoUi = m_Tool != null ? m_Tool.GetGlobalUndoUiState() : default(GlobalUndoUiState);
+            m_GlobalUndoEnabledBinding.Update(globalUndoUi.GlobalUndoEnabled);
+            m_GlobalUndoTrackBuildBinding.Update(globalUndoUi.TrackBuild);
+            m_GlobalUndoTrackBulldozeBinding.Update(globalUndoUi.TrackBulldoze);
+            m_GlobalUndoTrackUpgradeBinding.Update(globalUndoUi.TrackUpgrade);
+            m_GlobalUndoTrackZoneBinding.Update(globalUndoUi.TrackZone);
+            m_GlobalUndoTrackTerrainBinding.Update(globalUndoUi.TrackTerrain);
+            m_GlobalUndoYieldingBinding.Update(canUse && globalUndoUi.ExternalToolYielding);
+            m_GlobalUndoYieldingToolBinding.Update(canUse ? (globalUndoUi.ExternalToolName ?? string.Empty) : string.Empty);
+            m_GlobalUndoActiveKindBinding.Update(canUse ? (globalUndoUi.ActiveStepKind ?? "none") : "none");
+            m_GlobalUndoTopKindBinding.Update(canUse ? (globalUndoUi.TopStepKind ?? "none") : "none");
+            m_GlobalUndoTopCountBinding.Update(canUse ? globalUndoUi.TopStepCount : 0);
+            m_GlobalUndoTerrainMemKBBinding.Update(canUse ? globalUndoUi.TerrainMemoryKB : 0);
+            m_GlobalUndoHistoryJsonBinding.Update(canUse ? (globalUndoUi.HistoryJson ?? "[]") : "[]");
+            m_GlobalUndoPanelOpenBinding.Update(canUse && m_GlobalUndoPanelOpen);
+
             UpdateImpactReport(pending);
             m_SelectionHistoryCountBinding.Update(active && m_Tool != null ? m_Tool.SelectionHistoryCount : 0);
             m_LastInterruptedDeletionCount = active ? m_Tool.InterruptedDeletionCount : 0;
@@ -1609,6 +1774,8 @@ namespace MarqueeDelete
             m_LastShapeInvalid = shapeInvalid;
             m_LastPickSimilarArmed = pickSimilarArmed;
             m_LastUndoUi = undoUi;
+            m_LastGlobalUndoUi = globalUndoUi;
+            m_LastGlobalUndoPanelOpen = m_GlobalUndoPanelOpen;
             m_HasLastUndoUi = true;
             m_Dirty = false;
         }

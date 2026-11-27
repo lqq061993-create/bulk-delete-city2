@@ -29,6 +29,16 @@ internal static class HarnessProgram
     {
         Mod.Settings = new Settings { MaxUndoHistorySteps = 20 };
 
+        // Bypass compatibility tier gate in offline harness so GlobalUndoManager runs end-to-end.
+        var groupsField = typeof(Compatibility).GetField("s_Groups", BindingFlags.Static | BindingFlags.NonPublic);
+        if (groupsField?.GetValue(null) is GroupCompatibilityResult[] groups)
+        {
+            for (int i = 0; i < groups.Length; i++)
+            {
+                groups[i] = new GroupCompatibilityResult { Group = (CompatibilityGroup)i, Tier = CompatibilityTier.Verified };
+            }
+        }
+
         Run("scenario 1 (cross-batch, shared junction, no pause)", ScenarioCrossBatchRestoresBothSegments);
         Run("scenario 2 (foreign edge spliced during a pause)", ScenarioExternalSpliceBetweenBatches);
         Run("scenario 3 (resume tolerates its own rebuilt edge)", ScenarioResumeToleratesOwnRebuiltEdge);
@@ -56,11 +66,22 @@ internal static class HarnessProgram
         Run("scenario 25 (composite SubObject SubNet and SubArea defer across Boundary until SubObjectSystem spawns SubObject)", ScenarioCompositeSubObjectSubs);
         Run("scenario 26 (ground SubNet keeps ParentMesh -1, omits spurious FreeHeight, and queues connection refresh)", ScenarioGroundSubNetAndConnectionRefresh);
         Run("scenario 27 (oversized batched capture caps PrepareBatchedCapture and prioritizes roads/buildings over trees)", ScenarioMegaBatchPrioritizesNetsAndBuildings);
-        Run("scenario 28 (uninterrupted boundary node drift snaps curve, cross-batch road binds rebuilt junction, driveway keeps DisableMerge)", ScenarioBoundaryDriftAndCrossBatchJunctionBinding);
-        Run("scenario 29 (runtime SubNet recovers ParentMesh from prefab SubNet buffer and LHT-reversed curve)", ScenarioPrefabSubNetParentMeshRecovery);
+        Run("scenario 28 (uninterrupted boundary node drift snaps curve, cross-batch road binds rebuilt junction, driveway omits DisableMerge)", ScenarioBoundaryDriftAndCrossBatchJunctionBinding);
+        Run("scenario 29 (prefab SubNet preserves ParentMesh on inverted LHT curve without DisableMerge)", ScenarioPrefabSubNetParentMeshRecovery);
+        Run("scenario 30 (park prefab-driven atomic rebuild: shared m_NodeIndex averaging, ParentMesh, Upgrades, SubArea, LHT inversion)", ScenarioParkPrefabDrivenAtomicRebuildAndLht);
+        Run("scenario 31 (atomic SubObjectUnit with prefab SubNets and OnWater lazy water reader)", ScenarioSubObjectUnitPrefabSubNetsAndWater);
+        Run("scenario 32 (MarqueeDeleteUndoSystem cleans up orphaned permanent CourseSplitSystem carriers only during/after undo)", ScenarioMarqueeDeleteUndoSystemCarrierCleanup);
+        Run("scenario 33 (ground terrain adjust, self-loop flags, inline/deferred upgrade prefab SubNets, non-inverting LHT upgrade flip, invalid SubNet skip accounting)", ScenarioPrefabSubNetEdgeCases);
+        Run("scenario 34 (global undo Combine straight extension shrinks in-place without delete/rebuild)", ScenarioGlobalUndoCombineShrinkInPlace);
+        Run("scenario 35 (global undo Replace adjacent road restores in-place and deletes only new branch)", ScenarioGlobalUndoReplaceAdjacentInPlace);
+        Run("scenario 36 (global undo Split mid-segment T-junction preserves both halves and deletes only new branch)", ScenarioGlobalUndoSplitPreservesHalves);
+        Run("scenario 37 (global undo Split with auto-demolished roadside building preserves halves and restores building)", ScenarioGlobalUndoSplitWithAutoDemolishedBuilding);
+        Run("scenario 38 (global undo Combine skips shrinking when later road attaches to far node)", ScenarioGlobalUndoCombineTopologySafetyGuard);
+        Run("scenario 39 (global undo Combine into pre-existing intersection falls back to Delete+Rebuild)", ScenarioGlobalUndoCombineExistingIntersectionFallback);
+        Run("scenario 40 (global undo Node Replace remaps adjacent endpoints and replay refuses unrelated Edge rewiring)", ScenarioGlobalUndoNodeReplaceRemapAndRewireGuard);
 
         Console.WriteLine(s_Failures == 0
-            ? "Undo harness: 29 scenarios, " + s_Checks + " checks passed"
+            ? "Undo harness: 40 scenarios, " + s_Checks + " checks passed"
             : "Undo harness: " + s_Failures + " of " + s_Checks + " checks failed");
         return s_Failures == 0 ? 0 : 1;
     }
@@ -1652,10 +1673,10 @@ internal static class HarnessProgram
         var courses = ReadEmittedComponents<Game.Tools.NetCourse>(bldStep);
         Check(courses.Count == 1 &&
               courses[0].m_StartPosition.m_Entity == Entity.Null &&
-              (courses[0].m_StartPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) != 0 &&
+              (courses[0].m_StartPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) == 0 &&
               courses[0].m_EndPosition.m_Entity == extStreetNode &&
               (courses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) == 0,
-            "scenario 21: owned start keeps DisableMerge while external live junction binds m_EndPosition.m_Entity without DisableMerge");
+            "scenario 21: owned SubNet omits DisableMerge while external live junction binds m_EndPosition.m_Entity");
     }
 
     // 22. An Edge with Attached pointing to a building in the plan that does NOT list it in SubNet is not dropped.
@@ -2076,24 +2097,27 @@ internal static class HarnessProgram
         }
         var bldCourses = ReadEmittedComponents<Game.Tools.NetCourse>(step3);
         Check(done3 && bldCourses.Count == 1 &&
-              (bldCourses[0].m_StartPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) != 0 &&
-              (bldCourses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) != 0 &&
+              (bldCourses[0].m_StartPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) == 0 &&
+              (bldCourses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) == 0 &&
               (bldCourses[0].m_StartPosition.m_Flags & Game.Tools.CoursePosFlags.FreeHeight) == 0 &&
               (bldCourses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.FreeHeight) == 0,
-            "scenario 28: owned building driveway SubNet keeps DisableMerge and omits FreeHeight matching vanilla ZoneSpawnSystem");
+            "scenario 28: owned building driveway SubNet omits DisableMerge and omits FreeHeight matching ObjectToolBaseSystem");
         Check(manager.NetPositionRejected == 0, "scenario 28: zero NetPositionRejected (" + manager.NetPositionRejected + ")");
     }
 
-    // 29. Runtime building SubNets without LocalTransformCache recover exact m_ParentMesh from the
-    //     building prefab's Game.Prefabs.SubNet buffer (including LHT-reversed curves), so
-    //     CourseSplitSystem.CalculateElevation preserves their elevation instead of zeroing it.
+    // 29. Prefab-driven building SubNets preserve exact m_ParentMesh (including inverted curves)
+    //     without DisableMerge or FreeHeight.
     private static void ScenarioPrefabSubNetParentMeshRecovery()
     {
         var em = new EntityManager();
         Entity bldPrefab = MakeObjectPrefab(em, 5950);
         Entity netPrefab = MakeNetPrefab(em, 5951);
+        em.AddComponentData(netPrefab, new Game.Prefabs.NetGeometryData
+        {
+            m_Flags = Game.Net.GeometryFlags.FlipTrafficHandedness
+        });
 
-        // Prefab SubNet has m_ParentMesh = (0, -1) on local curve (0,2,0) -> (0,0,8).
+        // Prefab SubNet has m_ParentMesh = (0, -1) on local curve (0,2,0) -> (0,0,8) with m_InvertMode = Always.
         var localCurve = new Colossal.Mathematics.Bezier4x3(
             new float3(0f, 2f, 0f), new float3(0f, 2f, 2f), new float3(0f, 0f, 6f), new float3(0f, 0f, 8f));
         em.Buffer(bldPrefab, new Game.Prefabs.SubNet
@@ -2102,6 +2126,7 @@ internal static class HarnessProgram
             m_Curve = localCurve,
             m_NodeIndex = new int2(0, 1),
             m_ParentMesh = new int2(0, -1),
+            m_InvertMode = Game.Prefabs.NetInvertMode.Always,
         });
 
         float3 bldPos = new float3(40f, 10f, 20f);
@@ -2110,7 +2135,7 @@ internal static class HarnessProgram
         em.AddComponentData(bld, new Game.Objects.Transform { m_Position = bldPos, m_Rotation = quaternion.identity });
         em.AddComponentData(bld, new Game.Buildings.Building());
 
-        // Live runtime SubNet is reversed (as in LHT) and carries NO LocalTransformCache!
+        // Live runtime SubNet is reversed and carries NO LocalTransformCache.
         float3 liveStart = bldPos + new float3(0f, 0f, 8f);
         float3 liveEnd = bldPos + new float3(0f, 2f, 0f);
         Entity nStart = MakeJunctionAt(em, 9101, liveStart);
@@ -2139,7 +2164,1212 @@ internal static class HarnessProgram
               courses[0].m_StartPosition.m_ParentMesh == -1 &&
               courses[0].m_EndPosition.m_ParentMesh == 0 &&
               (courses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.FreeHeight) == 0 &&
-              (courses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) != 0,
-            "scenario 29: reversed runtime SubNet recovers swapped m_ParentMesh (-1, 0) from prefab without LocalTransformCache");
+              (courses[0].m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) == 0,
+            "scenario 29: inverted prefab SubNet preserves swapped m_ParentMesh (-1, 0) without DisableMerge");
+    }
+
+    // 30. Park building prefab with multi-curve Game.Prefabs.SubNet sharing m_NodeIndex (with jitter),
+    //     m_ParentMesh, m_Upgrades, m_InvertMode = LefthandTraffic, and SubArea restores atomically in
+    //     one Step, with bitwise-identical shared endpoints, zero DisableMerge, exact CoursePos/NetCourse
+    //     elevations, and LHT curve/NodeIndex/ParentMesh/Upgrade inversion.
+    private static void ScenarioParkPrefabDrivenAtomicRebuildAndLht()
+    {
+        var em = new EntityManager();
+        Entity parkPrefab = MakeObjectPrefab(em, 6000);
+        Entity pathPrefab = MakeNetPrefab(em, 6001);
+        Entity areaPrefab = MakeAreaPrefab(em, 6002);
+        em.AddComponentData(pathPrefab, new Game.Prefabs.NetGeometryData
+        {
+            m_Flags = Game.Net.GeometryFlags.FlipTrafficHandedness | Game.Net.GeometryFlags.FlattenTerrain
+        });
+
+        var upgFlags = new Game.Prefabs.CompositionFlags(
+            Game.Prefabs.CompositionFlags.General.Crosswalk,
+            Game.Prefabs.CompositionFlags.Side.Gate,
+            Game.Prefabs.CompositionFlags.Side.None);
+
+        // Two curves sharing m_NodeIndex 1 with slight local jitter:
+        // Curve 0: node 0 (0, 0, -10) -> node 1 (10.000, 1.5, 0.000)
+        // Curve 1: node 1 (10.004, 1.5, -0.002) -> node 2 (20, 0, 10)  (inverted on LHT!)
+        var c0Local = new Colossal.Mathematics.Bezier4x3(
+            new float3(0f, 0f, -10f), new float3(3f, 0.5f, -7f), new float3(7f, 1.0f, -3f), new float3(10.000f, 1.5f, 0.000f));
+        var c1Local = new Colossal.Mathematics.Bezier4x3(
+            new float3(10.004f, 1.5f, -0.002f), new float3(13f, 1.0f, 3f), new float3(17f, 0.5f, 7f), new float3(20f, 0f, 10f));
+
+        em.Buffer(parkPrefab,
+            new Game.Prefabs.SubNet
+            {
+                m_Prefab = pathPrefab,
+                m_Curve = c0Local,
+                m_NodeIndex = new int2(0, 1),
+                m_ParentMesh = new int2(-1, 0),
+                m_InvertMode = Game.Prefabs.NetInvertMode.Never,
+            },
+            new Game.Prefabs.SubNet
+            {
+                m_Prefab = pathPrefab,
+                m_Curve = c1Local,
+                m_NodeIndex = new int2(1, 2),
+                m_ParentMesh = new int2(0, 2),
+                m_InvertMode = Game.Prefabs.NetInvertMode.LefthandTraffic,
+                m_Upgrades = upgFlags,
+            });
+
+        float3 parkPos = new float3(100f, 12f, 200f);
+        quaternion parkRot = quaternion.RotateY(0.5f);
+
+        // Build RHT live park (including split live edges that must NOT be replayed when PrefabSubNetCount > 0!)
+        Entity parkRht = em.Make(9200);
+        em.AddComponentData(parkRht, new Game.Prefabs.PrefabRef { m_Prefab = parkPrefab });
+        em.AddComponentData(parkRht, new Game.Objects.Transform { m_Position = parkPos, m_Rotation = parkRot });
+        em.AddComponentData(parkRht, new Game.Buildings.Building());
+
+        Entity parkArea = em.Make(9201);
+        em.AddComponentData(parkArea, new Game.Prefabs.PrefabRef { m_Prefab = areaPrefab });
+        em.AddComponentData(parkArea, new Game.Areas.Area());
+        em.Buffer(parkArea,
+            new Game.Areas.Node { m_Position = parkPos + new float3(-10f, 0f, -10f) },
+            new Game.Areas.Node { m_Position = parkPos + new float3(10f, 0f, -10f) },
+            new Game.Areas.Node { m_Position = parkPos + new float3(0f, 0f, 10f) });
+        em.Buffer(parkRht, new Game.Areas.SubArea { m_Area = parkArea });
+
+        // Deliberately add 5 live split edges on parkRht to prove PrefabSubNetCount=2 ignores live split edges!
+        var liveSubNetBuf = em.AddBuffer<Game.Net.SubNet>(parkRht);
+        for (int s = 0; s < 5; s++)
+        {
+            Entity sa = MakeJunctionAt(em, 9210 + s * 2, parkPos + new float3(s, 0f, 0f));
+            Entity sb = MakeJunctionAt(em, 9211 + s * 2, parkPos + new float3(s + 1f, 0f, 0f));
+            Entity se = em.Make(9230 + s);
+            em.AddComponentData(se, new Game.Prefabs.PrefabRef { m_Prefab = pathPrefab });
+            em.AddComponentData(se, new Game.Net.Edge { m_Start = sa, m_End = sb });
+            em.AddComponentData(se, new Game.Net.Curve { m_Bezier = Straight(s, s + 1f), m_Length = 1f });
+            em.AddComponentData(se, new Game.Common.Owner { m_Owner = parkRht });
+            liveSubNetBuf.Add(new Game.Net.SubNet { m_SubNet = se });
+        }
+
+        // --- Part A: RHT restore ---
+        var planRht = new DeletionPlan(
+            new HashSet<Entity> { parkRht },
+            new HashSet<Entity> { parkRht, parkArea },
+            new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager mgrRht = Capture(em, planRht);
+        var snapUiRht = mgrRht.GetUiSnapshot(UndoAssetMask.All);
+        Check(snapUiRht.NextCount == 4, "scenario 30 (RHT): TotalCount = 1 building + 1 SubArea + 2 prefab SubNets = 4 (got " + snapUiRht.NextCount + ")");
+
+        em.DestroyEntity(parkRht);
+        Check(mgrRht.StartUndo(UndoAssetMask.All), "scenario 30 (RHT): undo starts");
+        var terrainSys = new Game.Simulation.TerrainSystem
+        {
+            Data = new Game.Simulation.TerrainHeightData { isCreated = true, HeightSampler = p => 12f }
+        };
+        var waterSys = new Game.Simulation.WaterSystem();
+        UnityEngine.Time.frameCount += 5;
+        var ecbRht = new EntityCommandBuffer();
+        mgrRht.Step(em, ecbRht, terrainSys, waterSys, isLeftHandTraffic: false, out bool completedRht);
+
+        Check(completedRht, "scenario 30 (RHT): completed == true in 1 single Step");
+        Check(terrainSys.GetHeightDataCalls == 1 && terrainSys.ReleaseCalls == 1,
+            "scenario 30 (RHT): TerrainHeightData lazily acquired once and released in finally");
+        Check(waterSys.GetSurfaceDataCalls == 0 && waterSys.ReleaseCalls == 0,
+            "scenario 30 (RHT): WaterSurfaceData not acquired when no OnWater SubNet exists");
+        var finishedRht = mgrRht.GetUiSnapshot(UndoAssetMask.All);
+        Check(finishedRht.FinishedRestoredCount == 4 && finishedRht.FinishedSkippedCount == 0 &&
+              finishedRht.FinishedRestoredCount + finishedRht.FinishedSkippedCount == finishedRht.FinishedTotalCount,
+            "scenario 30 (RHT): RestoredCount == TotalCount == 4, SkippedCount == 0");
+
+        var rhtCourses = ReadEmittedComponents<Game.Tools.NetCourse>(ecbRht);
+        Check(rhtCourses.Count == 2, "scenario 30 (RHT): emits 2 prefab SubNets instead of 5 live split edges");
+        if (rhtCourses.Count == 2)
+        {
+            // Shared m_NodeIndex 1: curve 0 end == curve 1 start bitwise-identically!
+            Check(rhtCourses[0].m_EndPosition.m_Position.Equals(rhtCourses[1].m_StartPosition.m_Position),
+                "scenario 30 (RHT): shared m_NodeIndex 1 endpoints are bitwise-identical despite 4mm local jitter");
+            foreach (var c in rhtCourses)
+            {
+                Check((c.m_StartPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) == 0 &&
+                      (c.m_EndPosition.m_Flags & Game.Tools.CoursePosFlags.DisableMerge) == 0,
+                    "scenario 30 (RHT): DisableMerge == 0 on both endpoints");
+                Check(c.m_Elevation.Equals(float2.zero), "scenario 30 (RHT): NetCourse.m_Elevation == float2.zero");
+            }
+            Check(rhtCourses[0].m_StartPosition.m_Elevation.Equals(new float2(c0Local.a.y)) &&
+                  rhtCourses[0].m_EndPosition.m_Elevation.Equals(new float2(c0Local.d.y)) &&
+                  rhtCourses[1].m_StartPosition.m_Elevation.Equals(new float2(c1Local.a.y)) &&
+                  rhtCourses[1].m_EndPosition.m_Elevation.Equals(new float2(c1Local.d.y)),
+                "scenario 30 (RHT): CoursePos m_Elevation matches localCurve.a.y / d.y");
+            Check(rhtCourses[1].m_StartPosition.m_ParentMesh == 0 && rhtCourses[1].m_EndPosition.m_ParentMesh == 2,
+                "scenario 30 (RHT): non-inverted curve 1 preserves m_ParentMesh (0, 2)");
+        }
+
+        // --- Part B: LHT restore (isLeftHandTraffic = true) ---
+        Entity parkLht = em.Make(9300);
+        em.AddComponentData(parkLht, new Game.Prefabs.PrefabRef { m_Prefab = parkPrefab });
+        em.AddComponentData(parkLht, new Game.Objects.Transform { m_Position = parkPos, m_Rotation = parkRot });
+        em.AddComponentData(parkLht, new Game.Buildings.Building());
+        em.Buffer(parkLht, new Game.Areas.SubArea { m_Area = parkArea });
+
+        var planLht = new DeletionPlan(
+            new HashSet<Entity> { parkLht },
+            new HashSet<Entity> { parkLht, parkArea },
+            new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager mgrLht = Capture(em, planLht);
+        em.DestroyEntity(parkLht);
+        Check(mgrLht.StartUndo(UndoAssetMask.All), "scenario 30 (LHT): undo starts");
+        UnityEngine.Time.frameCount += 5;
+        var ecbLht = new EntityCommandBuffer();
+        mgrLht.Step(em, ecbLht, terrainSys, waterSys, isLeftHandTraffic: true, out bool completedLht);
+        Check(completedLht, "scenario 30 (LHT): completed == true in 1 single Step");
+
+        var lhtCourses = ReadEmittedComponents<Game.Tools.NetCourse>(ecbLht);
+        var lhtUpgraded = ReadEmittedComponents<Game.Net.Upgraded>(ecbLht);
+        Check(lhtCourses.Count == 2, "scenario 30 (LHT): emits 2 SubNets");
+        if (lhtCourses.Count == 2)
+        {
+            // Curve 1 had m_InvertMode = LefthandTraffic + FlipTrafficHandedness:
+            // - curve inverted (d -> a), so startPos == node 2, endPos == averaged node 1!
+            // - m_NodeIndex swapped (1,2) -> (2,1), so curve 0 end == curve 1 end bitwise-identical!
+            // - m_ParentMesh swapped (0,2) -> (2,0)
+            // - m_Elevation matches inverted localCurve.a.y (0f) and inverted localCurve.d.y (1.5f)
+            // - Upgraded Side.Gate swapped Left <-> Right
+            Check(lhtCourses[0].m_EndPosition.m_Position.Equals(lhtCourses[1].m_EndPosition.m_Position),
+                "scenario 30 (LHT): inverted curve 1 swaps m_NodeIndex to (2,1), matching curve 0 end (node 1) bitwise");
+            Check(lhtCourses[1].m_StartPosition.m_ParentMesh == 2 && lhtCourses[1].m_EndPosition.m_ParentMesh == 0,
+                "scenario 30 (LHT): inverted curve 1 swaps m_ParentMesh to (2, 0)");
+            Check(lhtCourses[1].m_StartPosition.m_Elevation.Equals(new float2(c1Local.d.y)) &&
+                  lhtCourses[1].m_EndPosition.m_Elevation.Equals(new float2(c1Local.a.y)),
+                "scenario 30 (LHT): inverted curve 1 swaps start/end CoursePos elevations");
+            float3 expectedLhtStartWorld = Game.Objects.ObjectUtils.LocalToWorld(parkPos, parkRot, c1Local.d);
+            Check(math.distancesq(lhtCourses[1].m_Curve.a, expectedLhtStartWorld) < 1e-4f,
+                "scenario 30 (LHT): inverted curve 1 starts at former d endpoint");
+            Check(lhtUpgraded.Count == 1 &&
+                  lhtUpgraded[0].m_Flags.m_Left == Game.Prefabs.CompositionFlags.Side.None &&
+                  lhtUpgraded[0].m_Flags.m_Right == Game.Prefabs.CompositionFlags.Side.Gate,
+                "scenario 30 (LHT): FixInvertedUpgradeTrafficHandedness swapped Gate bit Left -> Right");
+        }
+    }
+
+    // 31. Composite SubObject with prefab SubNets (including OnWater) restores atomically in one
+    //     SubObjectUnit frame using CreationDefinition.m_Owner = liveSubObj and acquires WaterSystem lazily.
+    private static void ScenarioSubObjectUnitPrefabSubNetsAndWater()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 6100);
+        Entity subPrefab = MakeObjectPrefab(em, 6101);
+        Entity waterPathPrefab = MakeNetPrefab(em, 6102);
+        em.AddComponentData(waterPathPrefab, new Game.Prefabs.NetGeometryData
+        {
+            m_Flags = Game.Net.GeometryFlags.OnWater
+        });
+
+        em.Buffer(subPrefab,
+            new Game.Prefabs.SubNet
+            {
+                m_Prefab = waterPathPrefab,
+                m_Curve = new Colossal.Mathematics.Bezier4x3(
+                    new float3(0f, 5f, 0f), new float3(1f, 5f, 0f), new float3(2f, 5f, 0f), new float3(3f, 5f, 0f)),
+                m_NodeIndex = new int2(0, 1),
+                m_ParentMesh = new int2(-1, -1),
+            },
+            new Game.Prefabs.SubNet
+            {
+                m_Prefab = waterPathPrefab,
+                m_Curve = new Colossal.Mathematics.Bezier4x3(
+                    new float3(3f, 5f, 0f), new float3(4f, 5f, 0f), new float3(5f, 5f, 0f), new float3(6f, 5f, 0f)),
+                m_NodeIndex = new int2(1, 2),
+                m_ParentMesh = new int2(-1, -1),
+            });
+
+        float3 bldPos = new float3(10f, 0f, 10f);
+        float3 subPos = new float3(14f, 0f, 12f);
+        Entity bld = em.Make(9400);
+        em.AddComponentData(bld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bld, new Game.Objects.Transform { m_Position = bldPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(bld, new Game.Buildings.Building());
+
+        Entity subObj = em.Make(9401);
+        em.AddComponentData(subObj, new Game.Prefabs.PrefabRef { m_Prefab = subPrefab });
+        em.AddComponentData(subObj, new Game.Objects.Transform { m_Position = subPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(subObj, new Game.Common.Owner { m_Owner = bld });
+        em.Buffer(bld, new Game.Objects.SubObject { m_SubObject = subObj });
+        em.AddBuffer<Game.Net.SubNet>(subObj);
+
+        var plan = new DeletionPlan(
+            new HashSet<Entity> { bld },
+            new HashSet<Entity> { bld, subObj },
+            new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager manager = Capture(em, plan);
+        Check(manager.GetUiSnapshot(UndoAssetMask.All).NextCount == 3,
+            "scenario 31: TotalCount = 1 building + 2 SubObject prefab SubNets = 3");
+
+        em.DestroyEntity(bld);
+        em.DestroyEntity(subObj);
+
+        Check(manager.StartUndo(UndoAssetMask.Buildings), "scenario 31: undo starts");
+        var terrainSys = new Game.Simulation.TerrainSystem
+        {
+            Data = new Game.Simulation.TerrainHeightData { isCreated = true, HeightSampler = p => 2f }
+        };
+        var waterSys = new Game.Simulation.WaterSystem
+        {
+            Data = new Game.Simulation.WaterSurfaceData<Game.Simulation.SurfaceWater> { isCreated = true, WaterHeightSampler = p => 7.5f }
+        };
+
+        UnityEngine.Time.frameCount += 5;
+        var ecb1 = new EntityCommandBuffer();
+        manager.Step(em, ecb1, terrainSys, waterSys, false, out bool done1);
+        Check(!done1, "scenario 31: pauses at Boundary before SubObjectUnit");
+
+        Entity liveBld = em.Make(9500);
+        em.AddComponentData(liveBld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(liveBld, new Game.Objects.Transform { m_Position = bldPos, m_Rotation = quaternion.identity });
+        Entity liveSubObj = em.Make(9501);
+        em.AddComponentData(liveSubObj, new Game.Prefabs.PrefabRef { m_Prefab = subPrefab });
+        em.AddComponentData(liveSubObj, new Game.Objects.Transform { m_Position = subPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(liveSubObj, new Game.Common.Owner { m_Owner = liveBld });
+
+        UnityEngine.Time.frameCount += 5;
+        var ecb2 = new EntityCommandBuffer();
+        manager.Step(em, ecb2, terrainSys, waterSys, false, out bool done2);
+        Check(done2, "scenario 31: atomic SubObjectUnit restores both OnWater SubNets in 1 Step");
+        Check(terrainSys.GetHeightDataCalls == 1 && terrainSys.ReleaseCalls == 1 &&
+              waterSys.GetSurfaceDataCalls == 1 && waterSys.ReleaseCalls == 1,
+            "scenario 31: TerrainSystem and WaterSystem lazily acquired once and released");
+
+        var defs = ReadEmittedComponents<Game.Tools.CreationDefinition>(ecb2);
+        var ownerDefs = ReadEmittedComponents<Game.Tools.OwnerDefinition>(ecb2);
+        var courses = ReadEmittedComponents<Game.Tools.NetCourse>(ecb2);
+        Check(defs.Count == 2 && defs.All(d => d.m_Owner == liveSubObj) && ownerDefs.Count == 0,
+            "scenario 31: live-owner mode binds m_Owner = liveSubObj without OwnerDefinition");
+        Check(courses.Count == 2 &&
+              math.abs(courses[0].m_StartPosition.m_Position.y - 7.5f) < 1e-4f &&
+              courses[0].m_StartPosition.m_Elevation.Equals(float2.zero),
+            "scenario 31: OnWater SubNet samples water height 7.5f and zeroes local y elevation");
+        Check(LastAuditContains("Restored: 3") && LastAuditContains("Skipped: 0"),
+            "scenario 31: audit accounts cleanly (" + LastAuditLine() + ")");
+    }
+
+    // 32. MarqueeDeleteUndoSystem cleans up orphaned permanent CourseSplitSystem carriers
+    //     while undo is active or within the 4-frame post-undo window, ignores Updated/Temp/Deleted/non-Permanent,
+    //     and incurs zero work once the post-undo window expires.
+    private static void ScenarioMarqueeDeleteUndoSystemCarrierCleanup()
+    {
+        var undoSys = new MarqueeDeleteUndoSystem();
+        var em = undoSys.EntityManager;
+        undoSys.CreateForTest();
+
+        var toolSys = undoSys.World.GetOrCreateSystemManaged<MarqueeDeleteToolSystem>();
+        var barrier = undoSys.World.GetOrCreateSystemManaged<Game.Tools.ToolOutputBarrier>();
+
+        Entity orphanPerm = em.Make(9600);
+        em.AddComponentData(orphanPerm, new Game.Tools.CreationDefinition { m_Flags = Game.Tools.CreationFlags.Permanent });
+
+        Entity activeUpdated = em.Make(9601);
+        em.AddComponentData(activeUpdated, new Game.Tools.CreationDefinition { m_Flags = Game.Tools.CreationFlags.Permanent });
+        em.AddComponentData(activeUpdated, new Game.Common.Updated());
+
+        Entity tempCarrier = em.Make(9602);
+        em.AddComponentData(tempCarrier, new Game.Tools.CreationDefinition { m_Flags = Game.Tools.CreationFlags.Permanent });
+        em.AddComponentData(tempCarrier, new Game.Tools.Temp());
+
+        Entity alreadyDeleted = em.Make(9603);
+        em.AddComponentData(alreadyDeleted, new Game.Tools.CreationDefinition { m_Flags = Game.Tools.CreationFlags.Permanent });
+        em.AddComponentData(alreadyDeleted, new Game.Common.Deleted());
+
+        Entity nonPermanent = em.Make(9604);
+        em.AddComponentData(nonPermanent, new Game.Tools.CreationDefinition { m_Flags = Game.Tools.CreationFlags.None });
+
+        // Idle frame before any undo: must NOT touch orphanPerm.
+        undoSys.UpdateForTest();
+        Check(barrier.CurrentBuffer == null, "scenario 32: idle system emits nothing before undo");
+
+        // Active undo finishes on this frame (hadActive=true -> hasActive=false => m_PendingCarrierCleanupFrames=4, then decrements to 3).
+        toolSys.HasActiveUndo = true;
+        toolSys.OnTickUndo = _ => { toolSys.HasActiveUndo = false; };
+        undoSys.UpdateForTest();
+        var buf1 = barrier.CurrentBuffer;
+        var deleted1 = new List<Entity>();
+        if (buf1 != null)
+        {
+            foreach (var cmd in buf1.Commands)
+            {
+                if (cmd.Kind == EntityCommandBuffer.Kind.AddComponent && cmd.Type == typeof(Game.Common.Deleted))
+                {
+                    deleted1.Add(cmd.Entity);
+                }
+            }
+        }
+        Check(deleted1.Count == 1 && deleted1[0] == orphanPerm,
+            "scenario 32: marks only orphaned Permanent carrier Deleted (ignores Updated/Temp/Deleted/non-Permanent)");
+
+        // Simulate ClearSystem removing orphanPerm, then exhaust the remaining 3 post-undo frames.
+        em.DestroyEntity(orphanPerm);
+        barrier.ClearBuffer();
+        toolSys.OnTickUndo = null;
+        for (int f = 0; f < 3; f++)
+        {
+            undoSys.UpdateForTest();
+        }
+        Check(barrier.CurrentBuffer == null, "scenario 32: post-undo frames emit nothing when no orphans exist");
+
+        // Spawn another orphan after the 4-frame window has expired: idle system must not scan/delete it.
+        Entity lateOrphan = em.Make(9605);
+        em.AddComponentData(lateOrphan, new Game.Tools.CreationDefinition { m_Flags = Game.Tools.CreationFlags.Permanent });
+        undoSys.UpdateForTest();
+        Check(barrier.CurrentBuffer == null, "scenario 32: zero-cost idle state ignores late entity after cleanup window expires");
+    }
+
+    // 33. Covers remaining EmitPrefabSubNets & upgrade/accounting paths:
+    //     - ground-following (!flattenTerrain && !bothFixed) adjusts curve Y to TerrainHeightData + localCurve.y
+    //     - self-loop (startPos == endPos) combines IsFirst | IsLast on both CoursePos endpoints
+    //     - non-inverting LHT entry flips Upgrade traffic handedness (ForbidLeftTurn <-> ForbidRightTurn, Left <-> Right) without inverting curve
+    //     - physical upgrade with PrefabSubNetCount > 0 inline in BuildingUnit
+    //     - deferred upgrade (!HasOwnerSubBuffer) with PrefabSubNetCount > 0 uses live owner Transform
+    //     - invalid prefab SubNet entry (missing NetData) accounts cleanly in SkippedCount (Restored + Skipped == Total)
+    private static void ScenarioPrefabSubNetEdgeCases()
+    {
+        var em = new EntityManager();
+        Entity bldPrefab = MakeObjectPrefab(em, 6200);
+        Entity upgPrefab = MakeObjectPrefab(em, 6201);
+        Entity groundPathPrefab = MakeNetPrefab(em, 6202);
+        Entity invalidNetPrefab = em.Make(6203); // deliberately no NetData
+
+        em.AddComponentData(groundPathPrefab, new Game.Prefabs.NetGeometryData
+        {
+            m_Flags = Game.Net.GeometryFlags.None // neither FlattenTerrain nor FlipTrafficHandedness
+        });
+
+        var upgHandedness = new Game.Prefabs.CompositionFlags(
+            Game.Prefabs.CompositionFlags.General.Crosswalk,
+            Game.Prefabs.CompositionFlags.Side.ForbidLeftTurn,
+            Game.Prefabs.CompositionFlags.Side.None);
+
+        // Building prefab has 3 SubNets:
+        // 0: ground-following curve (-1, -1) with local y = 0.5f and LHT FlipUpgradeTrafficHandedness (no FlipTrafficHandedness!)
+        // 1: self-loop (start == end)
+        // 2: invalid prefab (missing NetData)
+        em.Buffer(bldPrefab,
+            new Game.Prefabs.SubNet
+            {
+                m_Prefab = groundPathPrefab,
+                m_Curve = new Colossal.Mathematics.Bezier4x3(
+                    new float3(0f, 0.5f, 0f), new float3(2f, 0.5f, 0f), new float3(4f, 0.5f, 0f), new float3(6f, 0.5f, 0f)),
+                m_NodeIndex = new int2(0, 1),
+                m_ParentMesh = new int2(-1, -1),
+                m_InvertMode = Game.Prefabs.NetInvertMode.LefthandTraffic,
+                m_Upgrades = upgHandedness,
+            },
+            new Game.Prefabs.SubNet
+            {
+                m_Prefab = groundPathPrefab,
+                m_Curve = new Colossal.Mathematics.Bezier4x3(
+                    new float3(10f, 0f, 0f), new float3(12f, 0f, 2f), new float3(8f, 0f, 2f), new float3(10f, 0f, 0f)),
+                m_NodeIndex = new int2(2, 2),
+                m_ParentMesh = new int2(0, 0),
+                m_InvertMode = Game.Prefabs.NetInvertMode.Never,
+            },
+            new Game.Prefabs.SubNet
+            {
+                m_Prefab = invalidNetPrefab,
+                m_Curve = Straight(0f, 2f),
+                m_NodeIndex = new int2(-1, -1),
+                m_ParentMesh = new int2(-1, -1),
+            });
+
+        // Upgrade prefab has 1 SubNet
+        em.Buffer(upgPrefab, new Game.Prefabs.SubNet
+        {
+            m_Prefab = groundPathPrefab,
+            m_Curve = new Colossal.Mathematics.Bezier4x3(
+                new float3(0f, 0f, 0f), new float3(1f, 0f, 0f), new float3(2f, 0f, 0f), new float3(3f, 0f, 0f)),
+            m_NodeIndex = new int2(0, 1),
+            m_ParentMesh = new int2(-1, -1),
+        });
+
+        // Part A: Inline physical upgrade (HasOwnerSubBuffer == true)
+        float3 bldPos = new float3(20f, 10f, 30f);
+        Entity bldInline = em.Make(9700);
+        em.AddComponentData(bldInline, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bldInline, new Game.Objects.Transform { m_Position = bldPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(bldInline, new Game.Buildings.Building());
+        em.AddBuffer<Game.Net.SubNet>(bldInline);
+
+        float3 upgPos = new float3(25f, 10f, 30f);
+        Entity upgInline = em.Make(9701);
+        em.AddComponentData(upgInline, new Game.Prefabs.PrefabRef { m_Prefab = upgPrefab });
+        em.AddComponentData(upgInline, new Game.Objects.Transform { m_Position = upgPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(upgInline, new Game.Objects.Object());
+        em.AddComponentData(upgInline, new Game.Buildings.ServiceUpgrade());
+        em.Buffer(bldInline, new Game.Buildings.InstalledUpgrade { m_Upgrade = upgInline });
+
+        var planInline = new DeletionPlan(
+            new HashSet<Entity> { bldInline },
+            new HashSet<Entity> { bldInline, upgInline },
+            new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager mgrInline = Capture(em, planInline);
+        // 1 building + 3 bldPrefab SubNets + 1 inline upgrade + 1 upgPrefab SubNet = 6
+        Check(mgrInline.GetUiSnapshot(UndoAssetMask.Buildings).NextCount == 6,
+            "scenario 33 (inline): TotalCount == 6");
+
+        em.DestroyEntity(bldInline);
+        em.DestroyEntity(upgInline);
+        Check(mgrInline.StartUndo(UndoAssetMask.Buildings), "scenario 33 (inline): undo starts");
+        var terrainSys = new Game.Simulation.TerrainSystem
+        {
+            Data = new Game.Simulation.TerrainHeightData { isCreated = true, HeightSampler = p => 10f + p.x * 0.1f }
+        };
+        UnityEngine.Time.frameCount += 5;
+        var ecbInline = new EntityCommandBuffer();
+        mgrInline.Step(em, ecbInline, terrainSys, null, isLeftHandTraffic: true, out bool doneInline);
+        Check(doneInline, "scenario 33 (inline): completes in 1 Step");
+
+        var inlineFinished = mgrInline.GetUiSnapshot(UndoAssetMask.Buildings);
+        Check(inlineFinished.FinishedRestoredCount == 5 && inlineFinished.FinishedSkippedCount == 1 &&
+              inlineFinished.FinishedRestoredCount + inlineFinished.FinishedSkippedCount == inlineFinished.FinishedTotalCount,
+            "scenario 33 (inline): Restored=5 + Skipped=1 == Total=6");
+
+        var courses = ReadEmittedComponents<Game.Tools.NetCourse>(ecbInline);
+        var upgraded = ReadEmittedComponents<Game.Net.Upgraded>(ecbInline);
+        Check(courses.Count == 3, "scenario 33 (inline): emits 2 valid bld SubNets + 1 upgrade SubNet");
+        if (courses.Count == 3)
+        {
+            // Curve 0: non-inverting LHT keeps curve direction (a.x = 20, d.x = 26), terrain at x=20 is 12.0 + 0.5 local = 12.5!
+            Check(math.abs(courses[0].m_Curve.a.x - 20f) < 1e-4f && math.abs(courses[0].m_Curve.a.y - 12.5f) < 1e-4f,
+                "scenario 33 (inline): ground-following AdjustPosition samples terrain (12.0) + localCurve.a.y (0.5) = 12.5 without inverting");
+            // Curve 1: self-loop combines IsFirst | IsLast on both endpoints
+            var bothFlags = Game.Tools.CoursePosFlags.IsFirst | Game.Tools.CoursePosFlags.IsLast;
+            Check((courses[1].m_StartPosition.m_Flags & bothFlags) == bothFlags &&
+                  (courses[1].m_EndPosition.m_Flags & bothFlags) == bothFlags,
+                "scenario 33 (inline): self-loop SubNet sets IsFirst | IsLast on both endpoints");
+        }
+        // Curve 0 had Side.ForbidLeftTurn on m_Left, no FlipTrafficHandedness -> FlipUpgradeTrafficHandedness moves it to m_Right as ForbidRightTurn!
+        Check(upgraded.Count == 1 &&
+              upgraded[0].m_Flags.m_Left == Game.Prefabs.CompositionFlags.Side.None &&
+              upgraded[0].m_Flags.m_Right == Game.Prefabs.CompositionFlags.Side.ForbidRightTurn,
+            "scenario 33 (inline): FlipUpgradeTrafficHandedness swaps Left<->Right and ForbidLeftTurn->ForbidRightTurn");
+
+        // Part B: Deferred upgrade (!HasOwnerSubBuffer) with PrefabSubNetCount > 0 uses live owner Transform
+        float3 bld2Pos = new float3(80f, 10f, 30f);
+        float3 upg2CapturedPos = new float3(85f, 10f, 30f);
+        float3 upg2LiveSnappedPos = new float3(85.02f, 10.02f, 30.01f);
+        Entity bldDef = em.Make(9800);
+        em.AddComponentData(bldDef, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bldDef, new Game.Objects.Transform { m_Position = bld2Pos, m_Rotation = quaternion.identity });
+        em.AddComponentData(bldDef, new Game.Buildings.Building());
+        // Deliberately NO SubNet/SubArea/SubObject buffer -> HasOwnerSubBuffer == false
+
+        Entity upgDef = em.Make(9801);
+        em.AddComponentData(upgDef, new Game.Prefabs.PrefabRef { m_Prefab = upgPrefab });
+        em.AddComponentData(upgDef, new Game.Objects.Transform { m_Position = upg2CapturedPos, m_Rotation = quaternion.identity });
+        em.AddComponentData(upgDef, new Game.Objects.Object());
+        em.AddComponentData(upgDef, new Game.Buildings.ServiceUpgrade());
+        em.Buffer(bldDef, new Game.Buildings.InstalledUpgrade { m_Upgrade = upgDef });
+
+        var planDef = new DeletionPlan(
+            new HashSet<Entity> { bldDef },
+            new HashSet<Entity> { bldDef, upgDef },
+            new HashSet<Entity>(), new HashSet<Entity>(), new HashSet<Entity>());
+        DeletionUndoManager mgrDef = Capture(em, planDef);
+        em.DestroyEntity(bldDef);
+        em.DestroyEntity(upgDef);
+
+        Check(mgrDef.StartUndo(UndoAssetMask.Buildings), "scenario 33 (deferred): undo starts");
+        StepOnce(em, mgrDef, out bool doneDef1); // BuildingUnit + Boundary
+        Check(!doneDef1, "scenario 33 (deferred): pauses at Boundary before deferred Upgrade");
+
+        Entity liveBldDef = em.Make(9900);
+        em.AddComponentData(liveBldDef, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(liveBldDef, new Game.Objects.Transform { m_Position = bld2Pos, m_Rotation = quaternion.identity });
+        StepOnce(em, mgrDef, out bool doneDef2); // Upgrade + Boundary
+        Check(!doneDef2, "scenario 33 (deferred): pauses at Boundary before deferred Upgrade's SubObjectUnit");
+
+        Entity liveUpgDef = em.Make(9901);
+        em.AddComponentData(liveUpgDef, new Game.Prefabs.PrefabRef { m_Prefab = upgPrefab });
+        em.AddComponentData(liveUpgDef, new Game.Objects.Transform { m_Position = upg2LiveSnappedPos, m_Rotation = quaternion.identity });
+
+        UnityEngine.Time.frameCount += 5;
+        var ecbDef3 = new EntityCommandBuffer();
+        mgrDef.Step(em, ecbDef3, terrainSys, null, false, out bool doneDef3);
+        Check(doneDef3, "scenario 33 (deferred): completes on SubObjectUnit");
+
+        var defCourses = ReadEmittedComponents<Game.Tools.NetCourse>(ecbDef3);
+        var defCreators = ReadEmittedComponents<Game.Tools.CreationDefinition>(ecbDef3);
+        Check(defCreators.Count == 1 && defCreators[0].m_Owner == liveUpgDef &&
+              defCourses.Count == 1 && math.distancesq(defCourses[0].m_StartPosition.m_Position, upg2LiveSnappedPos) < 1e-6f,
+            "scenario 33 (deferred): live-owner SubObjectUnit binds liveUpgDef and uses its live Transform");
+    }
+
+    // -------------------------------------------------------------------------
+    // GlobalUndo Road-Build Reconciliation Scenarios (34 - 38)
+    // -------------------------------------------------------------------------
+
+    private static void ApplyGlobalUndoEcb(EntityManager em, EntityCommandBuffer ecb, List<Game.Tools.CreationDefinition> capturedCreations = null)
+    {
+        if (ecb == null || ecb.Commands.Count == 0) return;
+        foreach (EntityCommandBuffer.Command cmd in ecb.Commands)
+        {
+            if (cmd.Kind == EntityCommandBuffer.Kind.Create)
+            {
+                if (!em.Exists(cmd.Entity))
+                {
+                    em.RawCreate(cmd.Entity.Index);
+                }
+            }
+            else if (cmd.Kind == EntityCommandBuffer.Kind.AddComponent)
+            {
+                if (capturedCreations != null && cmd.Type == typeof(Game.Tools.CreationDefinition))
+                {
+                    capturedCreations.Add((Game.Tools.CreationDefinition)cmd.Value);
+                }
+                if (em.Exists(cmd.Entity))
+                {
+                    em.Components(cmd.Entity)[cmd.Type] = cmd.Value;
+                }
+            }
+            else if (cmd.Kind == EntityCommandBuffer.Kind.AddBuffer)
+            {
+                if (em.Exists(cmd.Entity))
+                {
+                    em.Components(cmd.Entity)[cmd.Value.GetType()] = cmd.Value;
+                }
+            }
+            else if (cmd.Kind == EntityCommandBuffer.Kind.RemoveComponent)
+            {
+                if (em.Exists(cmd.Entity))
+                {
+                    em.Components(cmd.Entity).Remove(cmd.Type);
+                }
+            }
+        }
+    }
+
+    private static void CreateGlobalUndoQueries(
+        EntityManager em,
+        out EntityQuery tempQuery,
+        out EntityQuery zoneTempQuery,
+        out EntityQuery brushTempQuery,
+        out EntityQuery createdQuery)
+    {
+        tempQuery = em.CreateEntityQuery(
+            ComponentType.ReadOnly<Game.Tools.Temp>(),
+            ComponentType.Exclude<Game.Common.Deleted>());
+        zoneTempQuery = em.CreateEntityQuery(
+            ComponentType.ReadOnly<Game.Tools.Temp>(),
+            ComponentType.ReadOnly<Game.Zones.Block>(),
+            ComponentType.ReadOnly<Game.Zones.Cell>(),
+            ComponentType.Exclude<Game.Common.Deleted>());
+        brushTempQuery = em.CreateEntityQuery(
+            ComponentType.ReadOnly<Game.Tools.Temp>(),
+            ComponentType.ReadOnly<Game.Tools.Brush>(),
+            ComponentType.Exclude<Game.Common.Deleted>());
+        createdQuery = em.CreateEntityQuery(
+            ComponentType.ReadOnly<Game.Common.Applied>(),
+            ComponentType.ReadOnly<Game.Common.Created>(),
+            ComponentType.ReadOnly<Game.Prefabs.PrefabRef>(),
+            ComponentType.Exclude<Game.Common.Deleted>(),
+            ComponentType.Exclude<Game.Tools.Temp>());
+    }
+
+    private static Entity MakeNetNodeWithPrefab(EntityManager em, int id, Entity prefab, float3 pos)
+    {
+        Entity n = em.Make(id);
+        em.AddComponentData(n, new Game.Prefabs.PrefabRef { m_Prefab = prefab });
+        em.AddComponentData(n, new Game.Net.Node { m_Position = pos, m_Rotation = quaternion.identity });
+        em.AddBuffer<Game.Net.ConnectedEdge>(n);
+        return n;
+    }
+
+    private static Colossal.Mathematics.Bezier4x3 StraightLine(float3 a, float3 d) => new Colossal.Mathematics.Bezier4x3
+    {
+        a = a,
+        b = math.lerp(a, d, 1f / 3f),
+        c = math.lerp(a, d, 2f / 3f),
+        d = d,
+    };
+
+    private static Entity MakeRoadEdge3D(EntityManager em, int id, Entity prefab, Entity start, Entity end, float3 startPos, float3 endPos)
+    {
+        Entity e = em.Make(id);
+        em.AddComponentData(e, new Game.Prefabs.PrefabRef { m_Prefab = prefab });
+        em.AddComponentData(e, new Game.Net.Edge { m_Start = start, m_End = end });
+        em.AddComponentData(e, new Game.Net.Curve { m_Bezier = StraightLine(startPos, endPos), m_Length = math.distance(startPos, endPos) });
+        em.AddBuffer<Game.Net.SubLane>(e);
+        return e;
+    }
+
+    private static void ReplayGlobalUndoToCompletion(
+        EntityManager em,
+        GlobalUndoManager globalUndo,
+        DeletionUndoManager delUndo,
+        Game.Simulation.TerrainSystem terrainSys,
+        List<Game.Tools.CreationDefinition> capturedCreations = null)
+    {
+        var barrier = new Game.Tools.ToolOutputBarrier();
+        for (int iter = 0; iter < 20; iter++)
+        {
+            barrier.ClearBuffer();
+            bool ticked = globalUndo.TickReplay(em, barrier, terrainSys, null, null, null, delUndo, out bool completed, isLeftHandTraffic: false);
+            ApplyGlobalUndoEcb(em, barrier.CurrentBuffer, capturedCreations);
+            UnityEngine.Time.frameCount++;
+            if (completed || !ticked) break;
+        }
+    }
+
+    private static void ScenarioGlobalUndoCombineShrinkInPlace()
+    {
+        var em = new EntityManager();
+        var globalUndo = new GlobalUndoManager();
+        var delUndo = new DeletionUndoManager();
+        var terrainSys = new Game.Simulation.TerrainSystem();
+        var toolSys = new Game.Tools.ToolSystem { activeTool = new Game.Tools.ToolBaseSystem { toolID = "Net Tool" } };
+        CreateGlobalUndoQueries(em, out var tempQ, out var zoneQ, out var brushQ, out var createdQ);
+
+        Entity roadPrefab = em.Make(5000);
+        em.AddComponentData(roadPrefab, new Game.Prefabs.NetData());
+
+        Entity nodeA = MakeNetNodeWithPrefab(em, 10, roadPrefab, new float3(0f, 0f, 0f));
+        Entity nodeB = MakeNetNodeWithPrefab(em, 11, roadPrefab, new float3(100f, 0f, 0f));
+        Entity edgeOld = MakeRoadEdge3D(em, 20, roadPrefab, nodeA, nodeB, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        Link(em, nodeA, edgeOld);
+        Link(em, nodeB, edgeOld);
+
+        // PreApply: Combine edgeOld (A->B) + extension into tempCombined (A->C), deleting nodeB
+        Entity tempNodeC = MakeNetNodeWithPrefab(em, 201, roadPrefab, new float3(200f, 0f, 0f));
+        em.AddComponentData(tempNodeC, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        Entity tempCombined = MakeRoadEdge3D(em, 200, roadPrefab, nodeA, tempNodeC, new float3(0f, 0f, 0f), new float3(200f, 0f, 0f));
+        em.AddComponentData(tempCombined, new Game.Tools.Temp
+        {
+            m_Original = edgeOld,
+            m_Flags = Game.Tools.TempFlags.Replace | Game.Tools.TempFlags.Combine,
+        });
+
+        Entity tempDelNodeB = MakeNetNodeWithPrefab(em, 202, roadPrefab, new float3(100f, 0f, 0f));
+        em.AddComponentData(tempDelNodeB, new Game.Tools.Temp { m_Original = nodeB, m_Flags = Game.Tools.TempFlags.Delete });
+
+        UnityEngine.Time.frameCount = 500;
+        globalUndo.OnPreApply(em, toolSys, terrainSys, delUndo, tempQ, zoneQ, brushQ);
+
+        // Simulate ApplyNetSystem: edgeOld & nodeB marked Deleted; tempCombined & tempNodeC promoted in-place
+        em.AddComponentData(edgeOld, new Game.Common.Deleted());
+        em.AddComponentData(nodeB, new Game.Common.Deleted());
+        em.DestroyEntity(tempDelNodeB);
+        em.RemoveComponent<Game.Tools.Temp>(tempCombined);
+        em.AddComponentData(tempCombined, new Game.Common.Created());
+        em.AddComponentData(tempCombined, new Game.Common.Applied());
+        em.RemoveComponent<Game.Tools.Temp>(tempNodeC);
+        em.AddComponentData(tempNodeC, new Game.Common.Created());
+        em.AddComponentData(tempNodeC, new Game.Common.Applied());
+        em.Buffer(nodeA, new Game.Net.ConnectedEdge { m_Edge = tempCombined });
+        em.Buffer(tempNodeC, new Game.Net.ConnectedEdge { m_Edge = tempCombined });
+
+        globalUndo.OnPostApply(em, createdQ);
+        globalUndo.FlushOpenStroke();
+
+        GlobalUndoTransaction tx = globalUndo.PeekTopTransaction();
+        Check(tx != null, "scenario 34: transaction pushed");
+        Check(tx.Kind == GlobalUndoActionKind.Build, "scenario 34: classified as Build, not UpgradeReplace");
+        Check(tx.CreatedEntities.Count == 0, "scenario 34: combined edge excluded from CreatedEntities");
+        Check(tx.DeletedCount == 0, "scenario 34: old edge and nodeB excluded from DeletedSnapshot");
+        Check(tx.InPlaceNetPatches.Count == 1 && tx.InPlaceNetPatches.ContainsKey(tempCombined), "scenario 34: single InPlaceNetPatch on combined edge");
+        Check(tx.InPlaceNetPatches[tempCombined].MoveNodeEntity == tempNodeC && tx.InPlaceNetPatches[tempCombined].RequireSingleConnectedEdge,
+            "scenario 34: patch records MoveNodeEntity=C and RequireSingleConnectedEdge=true");
+
+        // Replay undo
+        Check(globalUndo.StartOrResumeUndo(UndoAssetMask.All, delUndo), "scenario 34: undo starts");
+        ReplayGlobalUndoToCompletion(em, globalUndo, delUndo, terrainSys);
+
+        Check(!em.HasComponent<Game.Common.Deleted>(tempCombined), "scenario 34: combined edge NOT deleted");
+        Check(!em.HasComponent<Game.Common.Deleted>(tempNodeC), "scenario 34: far node C NOT deleted");
+        Game.Net.Node cAfter = em.GetComponentData<Game.Net.Node>(tempNodeC);
+        Check(math.distancesq(cAfter.m_Position, new float3(100f, 0f, 0f)) < 1e-4f, "scenario 34: node C moved back to node B position (100,0,0)");
+        Game.Net.Curve curveAfter = em.GetComponentData<Game.Net.Curve>(tempCombined);
+        Check(math.abs(curveAfter.m_Length - 100f) < 1e-3f && math.distancesq(curveAfter.m_Bezier.d, new float3(100f, 0f, 0f)) < 1e-4f,
+            "scenario 34: combined edge curve shrunk back to original 0..100");
+        Check(em.HasComponent<Game.Common.Updated>(tempCombined) && em.HasComponent<Game.Common.Updated>(tempNodeC) && em.HasComponent<Game.Common.Updated>(nodeA),
+            "scenario 34: edge and endpoints marked Updated");
+        var refreshPos = new List<float3>();
+        Check(globalUndo.TryConsumeInPlaceNetRefresh(refreshPos) && refreshPos.Count == 1, "scenario 34: roadside refresh queued");
+    }
+
+    private static void ScenarioGlobalUndoReplaceAdjacentInPlace()
+    {
+        var em = new EntityManager();
+        var globalUndo = new GlobalUndoManager();
+        var delUndo = new DeletionUndoManager();
+        var terrainSys = new Game.Simulation.TerrainSystem();
+        var toolSys = new Game.Tools.ToolSystem { activeTool = new Game.Tools.ToolBaseSystem { toolID = "Net Tool" } };
+        CreateGlobalUndoQueries(em, out var tempQ, out var zoneQ, out var brushQ, out var createdQ);
+
+        Entity roadPrefab = em.Make(5000);
+        em.AddComponentData(roadPrefab, new Game.Prefabs.NetData());
+
+        Entity nodeA = MakeNetNodeWithPrefab(em, 10, roadPrefab, new float3(0f, 0f, 0f));
+        Entity nodeB = MakeNetNodeWithPrefab(em, 11, roadPrefab, new float3(100f, 0f, 0f));
+        Entity edgeAdj = MakeRoadEdge3D(em, 20, roadPrefab, nodeA, nodeB, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        Link(em, nodeA, edgeAdj);
+        Link(em, nodeB, edgeAdj);
+
+        // PreApply: new branch (B->D) causes CS2 to Replace edgeAdj -> tempAdjPrime (same prefab, slightly bent curve)
+        Entity tempNodeD = MakeNetNodeWithPrefab(em, 201, roadPrefab, new float3(100f, 0f, 80f));
+        em.AddComponentData(tempNodeD, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        Entity tempBranch = MakeRoadEdge3D(em, 202, roadPrefab, nodeB, tempNodeD, new float3(100f, 0f, 0f), new float3(100f, 0f, 80f));
+        em.AddComponentData(tempBranch, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        Entity tempAdjPrime = MakeRoadEdge3D(em, 200, roadPrefab, nodeA, nodeB, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        var bentBezier = StraightLine(new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        bentBezier.b.z = 2f;
+        em.Set(tempAdjPrime, new Game.Net.Curve { m_Bezier = bentBezier, m_Length = 100.5f });
+        em.AddComponentData(tempAdjPrime, new Game.Tools.Temp { m_Original = edgeAdj, m_Flags = Game.Tools.TempFlags.Replace });
+
+        UnityEngine.Time.frameCount = 600;
+        globalUndo.OnPreApply(em, toolSys, terrainSys, delUndo, tempQ, zoneQ, brushQ);
+
+        // Simulate ApplyNetSystem
+        em.AddComponentData(edgeAdj, new Game.Common.Deleted());
+        foreach (Entity e in new[] { tempAdjPrime, tempBranch, tempNodeD })
+        {
+            em.RemoveComponent<Game.Tools.Temp>(e);
+            em.AddComponentData(e, new Game.Common.Created());
+            em.AddComponentData(e, new Game.Common.Applied());
+        }
+        em.Buffer(nodeA, new Game.Net.ConnectedEdge { m_Edge = tempAdjPrime });
+        em.Buffer(nodeB, new Game.Net.ConnectedEdge { m_Edge = tempAdjPrime }, new Game.Net.ConnectedEdge { m_Edge = tempBranch });
+        em.Buffer(tempNodeD, new Game.Net.ConnectedEdge { m_Edge = tempBranch });
+
+        globalUndo.OnPostApply(em, createdQ);
+        globalUndo.FlushOpenStroke();
+
+        GlobalUndoTransaction tx = globalUndo.PeekTopTransaction();
+        Check(tx != null && tx.Kind == GlobalUndoActionKind.Build, "scenario 35: classified as Build");
+        Check(tx.CreatedEntities.Count == 1 && tx.CreatedEntities[0].Entity == tempBranch, "scenario 35: only new branch in CreatedEntities");
+        Check(tx.DeletedCount == 0, "scenario 35: replaced adjacent road excluded from DeletedSnapshot");
+        Check(tx.InPlaceNetPatches.Count == 1 && tx.InPlaceNetPatches.ContainsKey(tempAdjPrime), "scenario 35: InPlaceNetPatch recorded on tempAdjPrime");
+
+        Check(globalUndo.StartOrResumeUndo(UndoAssetMask.All, delUndo), "scenario 35: undo starts");
+        ReplayGlobalUndoToCompletion(em, globalUndo, delUndo, terrainSys);
+
+        Check(em.HasComponent<Game.Common.Deleted>(tempBranch), "scenario 35: new branch deleted");
+        Check(!em.HasComponent<Game.Common.Deleted>(tempAdjPrime), "scenario 35: replaced adjacent road NOT deleted");
+        Game.Net.Curve restoredCurve = em.GetComponentData<Game.Net.Curve>(tempAdjPrime);
+        Check(math.abs(restoredCurve.m_Bezier.b.z) < 1e-4f && math.abs(restoredCurve.m_Length - 100f) < 1e-3f,
+            "scenario 35: adjacent road curve restored in-place");
+        Check(em.HasComponent<Game.Common.Updated>(tempAdjPrime), "scenario 35: adjacent road marked Updated");
+    }
+
+    private static void ScenarioGlobalUndoSplitPreservesHalves()
+    {
+        var em = new EntityManager();
+        var globalUndo = new GlobalUndoManager();
+        var delUndo = new DeletionUndoManager();
+        var terrainSys = new Game.Simulation.TerrainSystem();
+        var toolSys = new Game.Tools.ToolSystem { activeTool = new Game.Tools.ToolBaseSystem { toolID = "Net Tool" } };
+        CreateGlobalUndoQueries(em, out var tempQ, out var zoneQ, out var brushQ, out var createdQ);
+
+        Entity roadPrefab = em.Make(5000);
+        em.AddComponentData(roadPrefab, new Game.Prefabs.NetData());
+
+        Entity nodeA = MakeNetNodeWithPrefab(em, 10, roadPrefab, new float3(0f, 0f, 0f));
+        Entity nodeB = MakeNetNodeWithPrefab(em, 11, roadPrefab, new float3(100f, 0f, 0f));
+        Entity edgeOld = MakeRoadEdge3D(em, 20, roadPrefab, nodeA, nodeB, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        Link(em, nodeA, edgeOld);
+        Link(em, nodeB, edgeOld);
+
+        // PreApply: SplitEdge deletes edgeOld, creates nodeM, nodeD, part1 (A->M), part2 (M->B), branch (M->D)
+        Entity tempDelOld = MakeRoadEdge3D(em, 200, roadPrefab, nodeA, nodeB, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        em.AddComponentData(tempDelOld, new Game.Tools.Temp { m_Original = edgeOld, m_Flags = Game.Tools.TempFlags.Delete });
+
+        Entity tempNodeM = MakeNetNodeWithPrefab(em, 201, roadPrefab, new float3(50f, 0f, 0f));
+        em.AddComponentData(tempNodeM, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        Entity tempNodeD = MakeNetNodeWithPrefab(em, 202, roadPrefab, new float3(50f, 0f, 60f));
+        em.AddComponentData(tempNodeD, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        Entity tempPart1 = MakeRoadEdge3D(em, 203, roadPrefab, nodeA, tempNodeM, new float3(0f, 0f, 0f), new float3(50f, 0f, 0f));
+        em.AddComponentData(tempPart1, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        Entity tempPart2 = MakeRoadEdge3D(em, 204, roadPrefab, tempNodeM, nodeB, new float3(50f, 0f, 0f), new float3(100f, 0f, 0f));
+        em.AddComponentData(tempPart2, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        Entity tempBranch = MakeRoadEdge3D(em, 205, roadPrefab, tempNodeM, tempNodeD, new float3(50f, 0f, 0f), new float3(50f, 0f, 60f));
+        em.AddComponentData(tempBranch, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        UnityEngine.Time.frameCount = 700;
+        globalUndo.OnPreApply(em, toolSys, terrainSys, delUndo, tempQ, zoneQ, brushQ);
+
+        // Simulate ApplyNetSystem
+        em.AddComponentData(edgeOld, new Game.Common.Deleted());
+        em.DestroyEntity(tempDelOld);
+        foreach (Entity e in new[] { tempNodeM, tempNodeD, tempPart1, tempPart2, tempBranch })
+        {
+            em.RemoveComponent<Game.Tools.Temp>(e);
+            em.AddComponentData(e, new Game.Common.Created());
+            em.AddComponentData(e, new Game.Common.Applied());
+        }
+        em.Buffer(nodeA, new Game.Net.ConnectedEdge { m_Edge = tempPart1 });
+        em.Buffer(nodeB, new Game.Net.ConnectedEdge { m_Edge = tempPart2 });
+        em.Buffer(tempNodeM,
+            new Game.Net.ConnectedEdge { m_Edge = tempPart1 },
+            new Game.Net.ConnectedEdge { m_Edge = tempPart2 },
+            new Game.Net.ConnectedEdge { m_Edge = tempBranch });
+        em.Buffer(tempNodeD, new Game.Net.ConnectedEdge { m_Edge = tempBranch });
+
+        globalUndo.OnPostApply(em, createdQ);
+        globalUndo.FlushOpenStroke();
+
+        GlobalUndoTransaction tx = globalUndo.PeekTopTransaction();
+        Check(tx != null && tx.Kind == GlobalUndoActionKind.Build, "scenario 36: classified as Build");
+        Check(tx.CreatedEntities.Count == 1 && tx.CreatedEntities[0].Entity == tempBranch, "scenario 36: only new branch in CreatedEntities");
+        Check(tx.DeletedCount == 0, "scenario 36: old split road excluded from DeletedSnapshot");
+        Check(tx.PreservedSplitRefreshTargets.Contains(tempPart1) &&
+              tx.PreservedSplitRefreshTargets.Contains(tempPart2) &&
+              tx.PreservedSplitRefreshTargets.Contains(tempNodeM),
+            "scenario 36: split halves and mid node recorded in PreservedSplitRefreshTargets");
+
+        Check(globalUndo.StartOrResumeUndo(UndoAssetMask.All, delUndo), "scenario 36: undo starts");
+        ReplayGlobalUndoToCompletion(em, globalUndo, delUndo, terrainSys);
+
+        Check(em.HasComponent<Game.Common.Deleted>(tempBranch), "scenario 36: new branch deleted");
+        Check(!em.HasComponent<Game.Common.Deleted>(tempPart1) && !em.HasComponent<Game.Common.Deleted>(tempPart2) && !em.HasComponent<Game.Common.Deleted>(tempNodeM),
+            "scenario 36: split halves and mid node survive intact");
+        Check(em.HasComponent<Game.Common.Updated>(tempPart1) && em.HasComponent<Game.Common.Updated>(tempPart2) && em.HasComponent<Game.Common.Updated>(tempNodeM),
+            "scenario 36: split halves and mid node marked Updated");
+        var refreshPos = new List<float3>();
+        Check(globalUndo.TryConsumeInPlaceNetRefresh(refreshPos) && refreshPos.Count == 2, "scenario 36: preserved split midpoints queued for roadside refresh");
+    }
+
+    private static void ScenarioGlobalUndoSplitWithAutoDemolishedBuilding()
+    {
+        var em = new EntityManager();
+        var globalUndo = new GlobalUndoManager();
+        var delUndo = new DeletionUndoManager();
+        var terrainSys = new Game.Simulation.TerrainSystem();
+        var toolSys = new Game.Tools.ToolSystem { activeTool = new Game.Tools.ToolBaseSystem { toolID = "Net Tool" } };
+        CreateGlobalUndoQueries(em, out var tempQ, out var zoneQ, out var brushQ, out var createdQ);
+
+        Entity roadPrefab = em.Make(5000);
+        em.AddComponentData(roadPrefab, new Game.Prefabs.NetData());
+        Entity bldPrefab = MakeObjectPrefab(em, 5100);
+
+        Entity nodeA = MakeNetNodeWithPrefab(em, 10, roadPrefab, new float3(0f, 0f, 0f));
+        Entity nodeB = MakeNetNodeWithPrefab(em, 11, roadPrefab, new float3(100f, 0f, 0f));
+        Entity edgeOld = MakeRoadEdge3D(em, 20, roadPrefab, nodeA, nodeB, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        Link(em, nodeA, edgeOld);
+        Link(em, nodeB, edgeOld);
+
+        // Existing roadside building auto-demolished by the new branch road
+        Entity bld = em.Make(30);
+        em.AddComponentData(bld, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bld, new Game.Objects.Object());
+        em.AddComponentData(bld, new Game.Buildings.Building { m_RoadEdge = edgeOld, m_CurvePosition = 0.5f });
+        em.AddComponentData(bld, new Game.Objects.Transform { m_Position = new float3(50f, 0f, 20f), m_Rotation = quaternion.identity });
+
+        Entity tempDelBld = em.Make(210);
+        em.AddComponentData(tempDelBld, new Game.Tools.Temp { m_Original = bld, m_Flags = Game.Tools.TempFlags.Delete });
+
+        Entity tempDelOld = MakeRoadEdge3D(em, 200, roadPrefab, nodeA, nodeB, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        em.AddComponentData(tempDelOld, new Game.Tools.Temp { m_Original = edgeOld, m_Flags = Game.Tools.TempFlags.Delete });
+
+        Entity tempNodeM = MakeNetNodeWithPrefab(em, 201, roadPrefab, new float3(50f, 0f, 0f));
+        em.AddComponentData(tempNodeM, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+        Entity tempNodeD = MakeNetNodeWithPrefab(em, 202, roadPrefab, new float3(50f, 0f, 60f));
+        em.AddComponentData(tempNodeD, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+        Entity tempPart1 = MakeRoadEdge3D(em, 203, roadPrefab, nodeA, tempNodeM, new float3(0f, 0f, 0f), new float3(50f, 0f, 0f));
+        em.AddComponentData(tempPart1, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+        Entity tempPart2 = MakeRoadEdge3D(em, 204, roadPrefab, tempNodeM, nodeB, new float3(50f, 0f, 0f), new float3(100f, 0f, 0f));
+        em.AddComponentData(tempPart2, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+        Entity tempBranch = MakeRoadEdge3D(em, 205, roadPrefab, tempNodeM, tempNodeD, new float3(50f, 0f, 0f), new float3(50f, 0f, 60f));
+        em.AddComponentData(tempBranch, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        UnityEngine.Time.frameCount = 800;
+        globalUndo.OnPreApply(em, toolSys, terrainSys, delUndo, tempQ, zoneQ, brushQ);
+
+        // Simulate ApplyNetSystem + ApplyObjectsSystem
+        em.AddComponentData(edgeOld, new Game.Common.Deleted());
+        em.AddComponentData(bld, new Game.Common.Deleted());
+        em.DestroyEntity(tempDelOld);
+        em.DestroyEntity(tempDelBld);
+        foreach (Entity e in new[] { tempNodeM, tempNodeD, tempPart1, tempPart2, tempBranch })
+        {
+            em.RemoveComponent<Game.Tools.Temp>(e);
+            em.AddComponentData(e, new Game.Common.Created());
+            em.AddComponentData(e, new Game.Common.Applied());
+        }
+        em.Buffer(nodeA, new Game.Net.ConnectedEdge { m_Edge = tempPart1 });
+        em.Buffer(nodeB, new Game.Net.ConnectedEdge { m_Edge = tempPart2 });
+        em.Buffer(tempNodeM,
+            new Game.Net.ConnectedEdge { m_Edge = tempPart1 },
+            new Game.Net.ConnectedEdge { m_Edge = tempPart2 },
+            new Game.Net.ConnectedEdge { m_Edge = tempBranch });
+        em.Buffer(tempNodeD, new Game.Net.ConnectedEdge { m_Edge = tempBranch });
+
+        globalUndo.OnPostApply(em, createdQ);
+        globalUndo.FlushOpenStroke();
+
+        GlobalUndoTransaction tx = globalUndo.PeekTopTransaction();
+        Check(tx != null && tx.Kind == GlobalUndoActionKind.Build, "scenario 37: classified as Build even with auto-demolished building");
+        Check(tx.CreatedEntities.Count == 1 && tx.CreatedEntities[0].Entity == tempBranch, "scenario 37: only new branch in CreatedEntities");
+        Check(tx.DeletedCount == 1 && tx.DeletedSnapshot.Counts.Buildings == 1 && tx.DeletedSnapshot.Counts.Networks == 0,
+            "scenario 37: DeletedSnapshot contains ONLY the auto-demolished building, NOT the split road");
+
+        var creations = new List<Game.Tools.CreationDefinition>();
+        Check(globalUndo.StartOrResumeUndo(UndoAssetMask.All, delUndo), "scenario 37: undo starts");
+        ReplayGlobalUndoToCompletion(em, globalUndo, delUndo, terrainSys, creations);
+
+        Check(em.HasComponent<Game.Common.Deleted>(tempBranch), "scenario 37: branch deleted");
+        Check(!em.HasComponent<Game.Common.Deleted>(tempPart1) && !em.HasComponent<Game.Common.Deleted>(tempPart2),
+            "scenario 37: split halves preserved intact");
+        Check(creations.Count == 1 && creations[0].m_Prefab == bldPrefab,
+            "scenario 37: auto-demolished roadside building emitted for restore");
+    }
+
+    private static void ScenarioGlobalUndoCombineTopologySafetyGuard()
+    {
+        var em = new EntityManager();
+        var globalUndo = new GlobalUndoManager();
+        var delUndo = new DeletionUndoManager();
+        var terrainSys = new Game.Simulation.TerrainSystem();
+        var toolSys = new Game.Tools.ToolSystem { activeTool = new Game.Tools.ToolBaseSystem { toolID = "Net Tool" } };
+        CreateGlobalUndoQueries(em, out var tempQ, out var zoneQ, out var brushQ, out var createdQ);
+
+        Entity roadPrefab = em.Make(5000);
+        em.AddComponentData(roadPrefab, new Game.Prefabs.NetData());
+
+        Entity nodeA = MakeNetNodeWithPrefab(em, 10, roadPrefab, new float3(0f, 0f, 0f));
+        Entity nodeB = MakeNetNodeWithPrefab(em, 11, roadPrefab, new float3(100f, 0f, 0f));
+        Entity edgeOld = MakeRoadEdge3D(em, 20, roadPrefab, nodeA, nodeB, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        Link(em, nodeA, edgeOld);
+        Link(em, nodeB, edgeOld);
+
+        Entity tempNodeC = MakeNetNodeWithPrefab(em, 201, roadPrefab, new float3(200f, 0f, 0f));
+        em.AddComponentData(tempNodeC, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+        Entity tempCombined = MakeRoadEdge3D(em, 200, roadPrefab, nodeA, tempNodeC, new float3(0f, 0f, 0f), new float3(200f, 0f, 0f));
+        em.AddComponentData(tempCombined, new Game.Tools.Temp { m_Original = edgeOld, m_Flags = Game.Tools.TempFlags.Replace | Game.Tools.TempFlags.Combine });
+        Entity tempDelNodeB = MakeNetNodeWithPrefab(em, 202, roadPrefab, new float3(100f, 0f, 0f));
+        em.AddComponentData(tempDelNodeB, new Game.Tools.Temp { m_Original = nodeB, m_Flags = Game.Tools.TempFlags.Delete });
+
+        UnityEngine.Time.frameCount = 900;
+        globalUndo.OnPreApply(em, toolSys, terrainSys, delUndo, tempQ, zoneQ, brushQ);
+
+        em.AddComponentData(edgeOld, new Game.Common.Deleted());
+        em.AddComponentData(nodeB, new Game.Common.Deleted());
+        em.DestroyEntity(tempDelNodeB);
+        em.RemoveComponent<Game.Tools.Temp>(tempCombined);
+        em.AddComponentData(tempCombined, new Game.Common.Created());
+        em.AddComponentData(tempCombined, new Game.Common.Applied());
+        em.RemoveComponent<Game.Tools.Temp>(tempNodeC);
+        em.AddComponentData(tempNodeC, new Game.Common.Created());
+        em.AddComponentData(tempNodeC, new Game.Common.Applied());
+        em.Buffer(nodeA, new Game.Net.ConnectedEdge { m_Edge = tempCombined });
+        em.Buffer(tempNodeC, new Game.Net.ConnectedEdge { m_Edge = tempCombined });
+
+        globalUndo.OnPostApply(em, createdQ);
+        globalUndo.FlushOpenStroke();
+
+        // Player builds a LATER road attached to node C before undoing the Combine step
+        Entity nodeE = MakeNetNodeWithPrefab(em, 300, roadPrefab, new float3(200f, 0f, 80f));
+        Entity edgeLater = MakeRoadEdge3D(em, 301, roadPrefab, tempNodeC, nodeE, new float3(200f, 0f, 0f), new float3(200f, 0f, 80f));
+        em.Buffer(tempNodeC,
+            new Game.Net.ConnectedEdge { m_Edge = tempCombined },
+            new Game.Net.ConnectedEdge { m_Edge = edgeLater });
+        em.Buffer(nodeE, new Game.Net.ConnectedEdge { m_Edge = edgeLater });
+
+        // Undo must skip moving node C / shrinking tempCombined to protect edgeLater
+        Check(globalUndo.StartOrResumeUndo(UndoAssetMask.All, delUndo), "scenario 38: undo starts");
+        ReplayGlobalUndoToCompletion(em, globalUndo, delUndo, terrainSys);
+
+        Game.Net.Node cAfter = em.GetComponentData<Game.Net.Node>(tempNodeC);
+        Check(math.distancesq(cAfter.m_Position, new float3(200f, 0f, 0f)) < 1e-4f,
+            "scenario 38: node C stayed at (200,0,0) because edgeLater is connected");
+        Game.Net.Curve curveAfter = em.GetComponentData<Game.Net.Curve>(tempCombined);
+        Check(math.abs(curveAfter.m_Length - 200f) < 1e-3f,
+            "scenario 38: tempCombined was NOT shrunk");
+        Check(!em.HasComponent<Game.Common.Deleted>(edgeLater), "scenario 38: later road untouched");
+        SelectiveUndoUiSnapshot ui = globalUndo.GetSelectiveUiSnapshot(UndoAssetMask.All, delUndo);
+        Check(ui.FinishedSkippedCount == 1 && ui.FinishedNotice == "UndoSubmittedPartial",
+            "scenario 38: reports skipped=1 and UndoSubmittedPartial");
+    }
+
+    private static void ScenarioGlobalUndoCombineExistingIntersectionFallback()
+    {
+        var em = new EntityManager();
+        var globalUndo = new GlobalUndoManager();
+        var delUndo = new DeletionUndoManager();
+        var terrainSys = new Game.Simulation.TerrainSystem();
+        var toolSys = new Game.Tools.ToolSystem { activeTool = new Game.Tools.ToolBaseSystem { toolID = "Net Tool" } };
+        CreateGlobalUndoQueries(em, out var tempQ, out var zoneQ, out var brushQ, out var createdQ);
+
+        Entity roadPrefab = em.Make(5000);
+        em.AddComponentData(roadPrefab, new Game.Prefabs.NetData());
+
+        Entity nodeA = MakeNetNodeWithPrefab(em, 10, roadPrefab, new float3(0f, 0f, 0f));
+        Entity nodeB = MakeNetNodeWithPrefab(em, 11, roadPrefab, new float3(100f, 0f, 0f));
+        Entity edgeOld = MakeRoadEdge3D(em, 20, roadPrefab, nodeA, nodeB, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        Link(em, nodeA, edgeOld);
+        Link(em, nodeB, edgeOld);
+
+        // Pre-existing intersection nodeC (NOT newly created in this stroke!) with another existing road
+        Entity nodeCExisting = MakeNetNodeWithPrefab(em, 12, roadPrefab, new float3(200f, 0f, 0f));
+        Entity nodeF = MakeNetNodeWithPrefab(em, 13, roadPrefab, new float3(200f, 0f, 80f));
+        Entity existingCross = MakeRoadEdge3D(em, 21, roadPrefab, nodeCExisting, nodeF, new float3(200f, 0f, 0f), new float3(200f, 0f, 80f));
+        Link(em, nodeCExisting, existingCross);
+        Link(em, nodeF, existingCross);
+
+        // PreApply: Combine edgeOld (A->B) straight into pre-existing nodeCExisting
+        Entity tempCombined = MakeRoadEdge3D(em, 200, roadPrefab, nodeA, nodeCExisting, new float3(0f, 0f, 0f), new float3(200f, 0f, 0f));
+        em.AddComponentData(tempCombined, new Game.Tools.Temp
+        {
+            m_Original = edgeOld,
+            m_Flags = Game.Tools.TempFlags.Replace | Game.Tools.TempFlags.Combine,
+        });
+        Entity tempDelNodeB = MakeNetNodeWithPrefab(em, 202, roadPrefab, new float3(100f, 0f, 0f));
+        em.AddComponentData(tempDelNodeB, new Game.Tools.Temp { m_Original = nodeB, m_Flags = Game.Tools.TempFlags.Delete });
+
+        UnityEngine.Time.frameCount = 1000;
+        globalUndo.OnPreApply(em, toolSys, terrainSys, delUndo, tempQ, zoneQ, brushQ);
+
+        em.AddComponentData(edgeOld, new Game.Common.Deleted());
+        em.AddComponentData(nodeB, new Game.Common.Deleted());
+        em.DestroyEntity(tempDelNodeB);
+        em.RemoveComponent<Game.Tools.Temp>(tempCombined);
+        em.AddComponentData(tempCombined, new Game.Common.Created());
+        em.AddComponentData(tempCombined, new Game.Common.Applied());
+        em.Buffer(nodeA, new Game.Net.ConnectedEdge { m_Edge = tempCombined });
+        em.Buffer(nodeCExisting,
+            new Game.Net.ConnectedEdge { m_Edge = existingCross },
+            new Game.Net.ConnectedEdge { m_Edge = tempCombined });
+
+        globalUndo.OnPostApply(em, createdQ);
+        globalUndo.FlushOpenStroke();
+
+        GlobalUndoTransaction tx = globalUndo.PeekTopTransaction();
+        Check(tx != null, "scenario 39: transaction pushed");
+        Check(tx.InPlaceNetPatches.Count == 0, "scenario 39: pre-existing far node NOT reconciled as Combine shrink");
+        Check(tx.CreatedEntities.Count == 1 && tx.CreatedEntities[0].Entity == tempCombined,
+            "scenario 39: combined edge stays in CreatedEntities for Delete+Rebuild fallback");
+        Check(tx.DeletedCount == 1, "scenario 39: old edge stays in DeletedSnapshot for fallback rebuild");
+
+        var creations = new List<Game.Tools.CreationDefinition>();
+        Check(globalUndo.StartOrResumeUndo(UndoAssetMask.All, delUndo), "scenario 39: undo starts");
+        ReplayGlobalUndoToCompletion(em, globalUndo, delUndo, terrainSys, creations);
+
+        Check(em.HasComponent<Game.Common.Deleted>(tempCombined), "scenario 39: combined bridge edge deleted");
+        Check(!em.HasComponent<Game.Common.Deleted>(nodeCExisting), "scenario 39: pre-existing intersection NOT deleted");
+        Game.Net.Node cAfter = em.GetComponentData<Game.Net.Node>(nodeCExisting);
+        Check(math.distancesq(cAfter.m_Position, new float3(200f, 0f, 0f)) < 1e-4f,
+            "scenario 39: pre-existing intersection NOT moved");
+        Check(creations.Count == 1 && creations[0].m_Prefab == roadPrefab,
+            "scenario 39: original edgeOld emitted for fallback rebuild");
+    }
+
+    private static void ScenarioGlobalUndoNodeReplaceRemapAndRewireGuard()
+    {
+        var em = new EntityManager();
+        var globalUndo = new GlobalUndoManager();
+        var delUndo = new DeletionUndoManager();
+        var terrainSys = new Game.Simulation.TerrainSystem();
+        var toolSys = new Game.Tools.ToolSystem { activeTool = new Game.Tools.ToolBaseSystem { toolID = "Net Tool" } };
+        CreateGlobalUndoQueries(em, out var tempQ, out var zoneQ, out var brushQ, out var createdQ);
+
+        Entity roadPrefab = em.Make(5000);
+        em.AddComponentData(roadPrefab, new Game.Prefabs.NetData());
+
+        Entity nodeA = MakeNetNodeWithPrefab(em, 10, roadPrefab, new float3(0f, 0f, 0f));
+        Entity nodeB = MakeNetNodeWithPrefab(em, 11, roadPrefab, new float3(100f, 0f, 0f));
+        Entity edgeAdj = MakeRoadEdge3D(em, 20, roadPrefab, nodeA, nodeB, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        Link(em, nodeA, edgeAdj);
+        Link(em, nodeB, edgeAdj);
+
+        // PreApply: nodeB is Replaced by tempNodeBPrime (slightly shifted); edgeAdj stays same entity with m_End updated to tempNodeBPrime,
+        // while a new branch (tempNodeBPrime -> tempNodeD) is created.
+        Entity tempNodeBPrime = MakeNetNodeWithPrefab(em, 201, roadPrefab, new float3(100f, 0f, 1f));
+        em.AddComponentData(tempNodeBPrime, new Game.Tools.Temp { m_Original = nodeB, m_Flags = Game.Tools.TempFlags.Replace });
+
+        Entity tempNodeD = MakeNetNodeWithPrefab(em, 202, roadPrefab, new float3(100f, 0f, 80f));
+        em.AddComponentData(tempNodeD, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        Entity tempBranch = MakeRoadEdge3D(em, 203, roadPrefab, tempNodeBPrime, tempNodeD, new float3(100f, 0f, 1f), new float3(100f, 0f, 80f));
+        em.AddComponentData(tempBranch, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        Entity tempModAdj = MakeRoadEdge3D(em, 204, roadPrefab, nodeA, tempNodeBPrime, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        em.AddComponentData(tempModAdj, new Game.Tools.Temp { m_Original = edgeAdj, m_Flags = Game.Tools.TempFlags.Modify });
+
+        UnityEngine.Time.frameCount = 1100;
+        globalUndo.OnPreApply(em, toolSys, terrainSys, delUndo, tempQ, zoneQ, brushQ);
+
+        // Simulate ApplyNetSystem: nodeB deleted, tempNodeBPrime promoted, edgeAdj updated in-place to end at tempNodeBPrime (same curve)
+        em.AddComponentData(nodeB, new Game.Common.Deleted());
+        em.DestroyEntity(tempModAdj);
+        em.Set(edgeAdj, new Game.Net.Edge { m_Start = nodeA, m_End = tempNodeBPrime });
+        foreach (Entity e in new[] { tempNodeBPrime, tempNodeD, tempBranch })
+        {
+            em.RemoveComponent<Game.Tools.Temp>(e);
+            em.AddComponentData(e, new Game.Common.Created());
+            em.AddComponentData(e, new Game.Common.Applied());
+        }
+        em.Buffer(nodeA, new Game.Net.ConnectedEdge { m_Edge = edgeAdj });
+        em.Buffer(tempNodeBPrime,
+            new Game.Net.ConnectedEdge { m_Edge = edgeAdj },
+            new Game.Net.ConnectedEdge { m_Edge = tempBranch });
+        em.Buffer(tempNodeD, new Game.Net.ConnectedEdge { m_Edge = tempBranch });
+
+        globalUndo.OnPostApply(em, createdQ);
+        globalUndo.FlushOpenStroke();
+
+        GlobalUndoTransaction tx = globalUndo.PeekTopTransaction();
+        Check(tx != null && tx.Kind == GlobalUndoActionKind.Build, "scenario 40: classified as Build");
+        Check(tx.InPlaceNetPatches.ContainsKey(tempNodeBPrime), "scenario 40: replaced nodeBPrime has InPlaceNetPatch");
+        Check(!tx.InPlaceNetPatches.ContainsKey(edgeAdj),
+            "scenario 40: unchanged edgeAdj does NOT emit spurious patch with dead nodeB after replacedNodeMap remap");
+
+        // Also verify replay refuses unrelated Edge rewiring on a Combine patch when live edge was externally rewired
+        var em2 = new EntityManager();
+        var gu2 = new GlobalUndoManager();
+        var du2 = new DeletionUndoManager();
+        CreateGlobalUndoQueries(em2, out var tq2, out var zq2, out var bq2, out var cq2);
+        Entity p2 = em2.Make(5000);
+        em2.AddComponentData(p2, new Game.Prefabs.NetData());
+        Entity a2 = MakeNetNodeWithPrefab(em2, 10, p2, new float3(0f, 0f, 0f));
+        Entity b2 = MakeNetNodeWithPrefab(em2, 11, p2, new float3(100f, 0f, 0f));
+        Entity old2 = MakeRoadEdge3D(em2, 20, p2, a2, b2, new float3(0f, 0f, 0f), new float3(100f, 0f, 0f));
+        Link(em2, a2, old2);
+        Link(em2, b2, old2);
+
+        Entity c2 = MakeNetNodeWithPrefab(em2, 201, p2, new float3(200f, 0f, 0f));
+        em2.AddComponentData(c2, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+        Entity comb2 = MakeRoadEdge3D(em2, 200, p2, a2, c2, new float3(0f, 0f, 0f), new float3(200f, 0f, 0f));
+        em2.AddComponentData(comb2, new Game.Tools.Temp { m_Original = old2, m_Flags = Game.Tools.TempFlags.Replace | Game.Tools.TempFlags.Combine });
+        Entity delB2 = MakeNetNodeWithPrefab(em2, 202, p2, new float3(100f, 0f, 0f));
+        em2.AddComponentData(delB2, new Game.Tools.Temp { m_Original = b2, m_Flags = Game.Tools.TempFlags.Delete });
+
+        UnityEngine.Time.frameCount = 1200;
+        gu2.OnPreApply(em2, toolSys, terrainSys, du2, tq2, zq2, bq2);
+
+        em2.AddComponentData(old2, new Game.Common.Deleted());
+        em2.AddComponentData(b2, new Game.Common.Deleted());
+        em2.DestroyEntity(delB2);
+        em2.RemoveComponent<Game.Tools.Temp>(comb2);
+        em2.AddComponentData(comb2, new Game.Common.Created());
+        em2.AddComponentData(comb2, new Game.Common.Applied());
+        em2.RemoveComponent<Game.Tools.Temp>(c2);
+        em2.AddComponentData(c2, new Game.Common.Created());
+        em2.AddComponentData(c2, new Game.Common.Applied());
+        em2.Buffer(a2, new Game.Net.ConnectedEdge { m_Edge = comb2 });
+        em2.Buffer(c2, new Game.Net.ConnectedEdge { m_Edge = comb2 });
+
+        gu2.OnPostApply(em2, cq2);
+        gu2.FlushOpenStroke();
+
+        // Externally rewire comb2's start from a2 to an unrelated node x2 before Undo
+        Entity x2 = MakeNetNodeWithPrefab(em2, 300, p2, new float3(50f, 0f, 50f));
+        em2.Set(comb2, new Game.Net.Edge { m_Start = x2, m_End = c2 });
+
+        Check(gu2.StartOrResumeUndo(UndoAssetMask.All, du2), "scenario 40: rewire-guard undo starts");
+        ReplayGlobalUndoToCompletion(em2, gu2, du2, terrainSys);
+
+        Game.Net.Edge liveAfter = em2.GetComponentData<Game.Net.Edge>(comb2);
+        Check(liveAfter.m_Start == x2 && liveAfter.m_End == c2,
+            "scenario 40: replay refuses to rewire comb2 back to unrelated node a2");
+        Check(math.distancesq(em2.GetComponentData<Game.Net.Node>(c2).m_Position, new float3(200f, 0f, 0f)) < 1e-4f,
+            "scenario 40: node c2 NOT moved when comb2 endpoints changed externally");
     }
 }

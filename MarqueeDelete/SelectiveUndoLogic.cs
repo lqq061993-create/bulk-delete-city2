@@ -420,6 +420,29 @@ namespace MarqueeDelete
             return true;
         }
 
+        public bool TryStartExternal(TSnapshot snapshot, UndoAssetMask mask)
+        {
+            if (m_Active != null || snapshot == null)
+            {
+                return false;
+            }
+
+            int filteredTotal = snapshot.Counts.GetFilteredSum(mask);
+            if (filteredTotal <= 0)
+            {
+                return false;
+            }
+
+            ClearFinishedNotice();
+            m_CaptureFailedCount = 0;
+            m_Active = snapshot;
+            m_ActiveMask = mask;
+            m_ActiveTotalCount = filteredTotal;
+            m_Paused = false;
+            RestoreActiveNotice();
+            return true;
+        }
+
         public bool Pause()
         {
             if (!IsInProgress)
@@ -554,6 +577,7 @@ namespace MarqueeDelete
         public const float RoadNeighborLotMargin = 20f;
         public const float RoadNeighborCenterRadius = 48f;
         public const float DisconnectedLotMargin = 32f;
+        public const float ZoneableLocalConnectMargin = 8f;
 
         public static bool BoundsOverlapXZ(
             float minAx, float maxAx, float minAz, float maxAz,
@@ -570,6 +594,42 @@ namespace MarqueeDelete
             if (centerDistXZ <= RoadNeighborCenterRadius) return true;
             if (hasNoRoadEdge && boundsDistXZ <= DisconnectedLotMargin) return true;
             return false;
+        }
+
+        public static float ComputeLocalConnectRadius(float nodeDefaultWidth, float searchDistance)
+        {
+            float r = nodeDefaultWidth * 0.5f + searchDistance;
+            return r > 0f ? r : 0f;
+        }
+
+        public static bool IsLocalConnectMatch(
+            int nodeConnectLayers,
+            int nodeLocalConnectLayers,
+            int edgeConnectLayers,
+            int edgeLocalConnectLayers,
+            float rawDistanceXZ,
+            float edgeDefaultWidth,
+            float minRoundaboutDistanceXZ,
+            bool nodeIsStandalone,
+            bool edgeIsStandalone,
+            bool edgeIsZoneable,
+            float nodeRadius,
+            float diffY,
+            float heightMin,
+            float heightMax)
+        {
+            if ((nodeLocalConnectLayers & edgeConnectLayers) == 0) return false;
+            if ((nodeConnectLayers & edgeLocalConnectLayers) == 0) return false;
+
+            float dist = rawDistanceXZ - edgeDefaultWidth * 0.5f;
+            if (minRoundaboutDistanceXZ < dist) dist = minRoundaboutDistanceXZ;
+            if (!nodeIsStandalone && edgeIsStandalone && edgeIsZoneable)
+            {
+                dist -= ZoneableLocalConnectMargin;
+            }
+            if (dist > nodeRadius) return false;
+
+            return diffY >= heightMin && diffY <= heightMax;
         }
     }
 }

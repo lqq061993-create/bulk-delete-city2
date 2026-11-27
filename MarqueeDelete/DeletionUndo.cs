@@ -10,9 +10,11 @@ using Game.Creatures;
 using Game.Net;
 using Game.Objects;
 using Game.Prefabs;
+using Game.Simulation;
 using Game.Tools;
 using Game.Vehicles;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using NetElevation = Game.Net.Elevation;
@@ -27,27 +29,82 @@ namespace MarqueeDelete
     {
         private MarqueeDeleteToolSystem m_ToolSystem;
         private ToolOutputBarrier m_OutputBarrier;
+        private EntityQuery m_OrphanedCarrierQuery;
+        private int m_PendingCarrierCleanupFrames;
 
         protected override void OnCreate()
         {
             base.OnCreate();
             m_ToolSystem = World.GetOrCreateSystemManaged<MarqueeDeleteToolSystem>();
             m_OutputBarrier = World.GetOrCreateSystemManaged<ToolOutputBarrier>();
+            m_OrphanedCarrierQuery = GetEntityQuery(new EntityQueryDesc
+            {
+                All = new[] { ComponentType.ReadOnly<CreationDefinition>() },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<Updated>(),
+                    ComponentType.ReadOnly<Deleted>(),
+                    ComponentType.ReadOnly<Temp>(),
+                },
+            });
         }
 
         protected override void OnUpdate()
         {
-            if (m_ToolSystem != null && m_OutputBarrier != null)
+            if (m_ToolSystem == null || m_OutputBarrier == null)
             {
-                Dependency.Complete();
-                m_ToolSystem.TickUndo(m_OutputBarrier);
+                return;
+            }
+
+            Dependency.Complete();
+            bool hadActive = m_ToolSystem.HasActiveUndo;
+            m_ToolSystem.TickUndo(m_OutputBarrier);
+            bool hasActive = m_ToolSystem.HasActiveUndo;
+
+            if (hadActive || hasActive)
+            {
+                m_PendingCarrierCleanupFrames = 4;
+            }
+
+            if (m_PendingCarrierCleanupFrames > 0)
+            {
+                if (!hasActive)
+                {
+                    m_PendingCarrierCleanupFrames--;
+                }
+
+                if (!m_OrphanedCarrierQuery.IsEmptyIgnoreFilter)
+                {
+                    using (var entities = m_OrphanedCarrierQuery.ToEntityArray(Unity.Collections.Allocator.Temp))
+                    {
+                        EntityCommandBuffer ecb = default;
+                        bool hasEcb = false;
+                        for (int i = 0; i < entities.Length; i++)
+                        {
+                            Entity e = entities[i];
+                            if (e == Entity.Null || !EntityManager.Exists(e))
+                            {
+                                continue;
+                            }
+                            if ((EntityManager.GetComponentData<CreationDefinition>(e).m_Flags & CreationFlags.Permanent) != 0)
+                            {
+                                if (!hasEcb)
+                                {
+                                    ecb = m_OutputBarrier.CreateCommandBuffer();
+                                    hasEcb = true;
+                                }
+                                ecb.AddComponent<Deleted>(e);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
     internal sealed class DeletionUndoManager
     {
-        public const int MaxUndoSnapshots = 5;
+        public const int MaxUndoSnapshots = 10;
         public const int MaxEntitiesPerSnapshot = 8000;
         private const int MaxRequestsPerStep = 16;
         private const double StepTimeBudgetMs = 3.0;
@@ -60,7 +117,7 @@ namespace MarqueeDelete
         private const float OwnEdgeLengthTolerance = 0.05f;
         private const float UninterruptedNodeDriftTolerance = 4.0f;
 
-        private enum UndoOperationKind { Boundary, Net, Area, Building, Upgrade, Object, BuildingUnit }
+        private enum UndoOperationKind { Boundary, Net, Area, Building, Upgrade, Object, BuildingUnit, SubObjectUnit }
         private struct UndoOperation
         {
             public UndoOperationKind Kind;
@@ -69,6 +126,7 @@ namespace MarqueeDelete
             public UndoBuildingRecord Building;
             public UndoUpgradeRecord Upgrade;
             public UndoObjectRecord Object;
+            public UndoSubObjectSubs SubObjectSubs;
 
             /// <summary>Position of this Net operation among all Net operations, for the verdict cache.</summary>
             public int NetIndex;
@@ -90,6 +148,8 @@ namespace MarqueeDelete
         private struct UndoSubObjectSubs
         {
             public OwnerDefinition OwnerDef;
+            public int Seed;
+            public int PrefabSubNetCount;
             public List<UndoAreaRecord> SubAreas;
             public List<UndoNetRecord> SubNets;
         }
@@ -155,6 +215,7 @@ namespace MarqueeDelete
             public bool IsPhysical;
             public bool HasOwnerSubBuffer;
             public int ParentMesh;
+            public int PrefabSubNetCount;
             public List<UndoAreaRecord> SubAreas;
             public List<UndoNetRecord> SubNets;
         }
@@ -171,6 +232,7 @@ namespace MarqueeDelete
             public UndoAttachedRef AttachedInfo;
             public bool HasOwnerSubBuffer;
             public int Seed;
+            public int PrefabSubNetCount;
             public List<UndoUpgradeRecord> Upgrades;
             public List<UndoAreaRecord> SubAreas;
             public List<UndoNetRecord> SubNets;
@@ -213,6 +275,24 @@ namespace MarqueeDelete
 
             /// <summary>Where the segment's end sat when it was captured; see <see cref="RecordedStartPos"/>.</summary>
             public float3 RecordedEndPos;
+        }
+
+        internal sealed class DetachedSnapshot
+        {
+            internal readonly IUndoSnapshotMeta Meta;
+            internal readonly object RawSnapshot;
+
+            internal DetachedSnapshot(IUndoSnapshotMeta meta, object rawSnapshot)
+            {
+                Meta = meta;
+                RawSnapshot = rawSnapshot;
+            }
+
+            public UndoCategoryCounts Counts => Meta != null ? Meta.Counts : default;
+            public UndoCategoryCounts NotCaptured => Meta != null ? Meta.NotCaptured : default;
+            public int TotalCount => Meta != null ? Meta.TotalCount : 0;
+            public bool Truncated => Meta != null && Meta.Truncated;
+            public bool HasOwnerTimeout => Meta != null && Meta.HasOwnerTimeout;
         }
 
         private sealed class UndoSnapshot : IUndoSnapshotMeta
@@ -940,7 +1020,102 @@ namespace MarqueeDelete
             }
         }
 
-        public void CommitDeletionCapture()
+        internal DetachedSnapshot CaptureDetachedSnapshot(EntityManager em, DeletionPlan plan)
+        {
+            return MergeIntoDetachedSnapshot(em, null, plan, null);
+        }
+
+        internal DetachedSnapshot MergeIntoDetachedSnapshot(
+            EntityManager em,
+            DetachedSnapshot target,
+            DeletionPlan plan,
+            HashSet<Entity> seenOriginals)
+        {
+            if (plan == null || plan.Submitted.Count == 0)
+            {
+                return target;
+            }
+
+            UndoSnapshot snapshot = (target?.RawSnapshot as UndoSnapshot) ?? new UndoSnapshot();
+            int recordedWeight = snapshot.TotalCount;
+
+            List<Entity> ordered = CollectPrioritizedCaptureRoots(em, plan.Roots ?? plan.Submitted);
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                Entity entity = ordered[i];
+                if (seenOriginals != null && !seenOriginals.Add(entity))
+                {
+                    continue;
+                }
+
+                if (recordedWeight >= MaxEntitiesPerSnapshot)
+                {
+                    snapshot.Truncated = true;
+                    break;
+                }
+
+                int tempWeight = recordedWeight;
+                bool localTruncated = false;
+                if (TryCaptureSingleRoot(em, entity, plan, ref tempWeight, ref localTruncated, out FrozenRootRecord record))
+                {
+                    if (localTruncated) snapshot.Truncated = true;
+                    AppendCapturedRoot(snapshot, record, ref recordedWeight);
+                }
+            }
+
+            snapshot.TotalCount = recordedWeight;
+            return target != null && ReferenceEquals(target.RawSnapshot, snapshot)
+                ? target
+                : new DetachedSnapshot(snapshot, snapshot);
+        }
+
+        internal static DetachedSnapshot MergeDetachedSnapshots(DetachedSnapshot dstWrap, DetachedSnapshot srcWrap)
+        {
+            UndoSnapshot src = srcWrap?.RawSnapshot as UndoSnapshot;
+            if (src == null || src.TotalCount <= 0)
+            {
+                return dstWrap;
+            }
+            UndoSnapshot dst = dstWrap?.RawSnapshot as UndoSnapshot;
+            if (dst == null)
+            {
+                return srcWrap;
+            }
+
+            if (dst.TotalCount + src.TotalCount > MaxEntitiesPerSnapshot)
+            {
+                dst.Truncated = true;
+                return dstWrap;
+            }
+
+            dst.Nets.AddRange(src.Nets);
+            dst.Areas.AddRange(src.Areas);
+            dst.Buildings.AddRange(src.Buildings);
+            dst.Objects.AddRange(src.Objects);
+            dst.Counts.Buildings += src.Counts.Buildings;
+            dst.Counts.Networks += src.Counts.Networks;
+            dst.Counts.Areas += src.Counts.Areas;
+            dst.Counts.Trees += src.Counts.Trees;
+            dst.Counts.Props += src.Counts.Props;
+            dst.Counts.Decals += src.Counts.Decals;
+            dst.NotCaptured.Buildings += src.NotCaptured.Buildings;
+            dst.NotCaptured.Networks += src.NotCaptured.Networks;
+            dst.NotCaptured.Areas += src.NotCaptured.Areas;
+            dst.NotCaptured.Trees += src.NotCaptured.Trees;
+            dst.NotCaptured.Props += src.NotCaptured.Props;
+            dst.NotCaptured.Decals += src.NotCaptured.Decals;
+            dst.TotalCount += src.TotalCount;
+            dst.Truncated |= src.Truncated;
+            return dstWrap;
+        }
+
+        internal DetachedSnapshot FinalizeDeferredCaptureDetached()
+        {
+            UndoSnapshot snapshot = FinalizeDeferredCaptureInternal();
+            return snapshot != null ? new DetachedSnapshot(snapshot, snapshot) : null;
+        }
+
+        private UndoSnapshot FinalizeDeferredCaptureInternal()
         {
             FrozenBatchCapture frozen = m_FrozenBatchCapture;
             m_FrozenBatchCapture = null;
@@ -964,11 +1139,72 @@ namespace MarqueeDelete
                 snapshot.TotalCount = recordedWeight;
             }
 
+            return snapshot;
+        }
+
+        public void CommitDeletionCapture()
+        {
+            UndoSnapshot snapshot = FinalizeDeferredCaptureInternal();
             if (snapshot != null)
             {
                 if (Mod.Settings != null) m_Tracker.MaxHistory = Mod.Settings.MaxUndoHistorySteps;
                 m_Tracker.OnCaptureCompleted(snapshot);
             }
+        }
+
+        internal bool StartDetachedUndo(DetachedSnapshot wrap, UndoAssetMask mask)
+        {
+            UndoSnapshot snap = wrap?.RawSnapshot as UndoSnapshot;
+            if (snap == null || !m_Tracker.TryStartExternal(snap, mask))
+            {
+                return false;
+            }
+
+            m_JunctionSnapshotBuilds = 0;
+            m_JunctionLookups = 0;
+            m_JunctionScans = 0;
+            m_JunctionSnapshotNodes = 0;
+
+            m_PendingRefreshBuildingPositions.Clear();
+            m_PendingRefreshNetPositions.Clear();
+            InvalidateLiveSpatialCaches();
+            m_ResolvedOwners.Clear();
+            m_FailedOwners.Clear();
+            m_OwnerWaitStarted = -1;
+            m_OwnerIndex.Clear();
+            m_OwnerIndexFrame = -1;
+            m_WaitingOperation = null;
+            m_BatchPolicy = new UndoBatchPolicy();
+            m_OwnerPrefabs.Clear();
+            m_PreExistingOwners.Clear();
+            m_NeedPreExistingSnapshot = true;
+            m_AmbiguousOwners = 0;
+            m_ConnectivitySkips = 0;
+            m_OccupiedRestores = 0;
+            m_LaneUnconfirmed = 0;
+            m_NetIdentityRejected = 0;
+            m_NetVerdictMisses = 0;
+            m_NetPositionRejected = 0;
+            m_MaxNetPosDrift = 0f;
+
+            snap.Verdicts = null;
+            snap.IdentityGate = false;
+            snap.EmittedNets.Clear();
+            snap.EmittedNetIndices.Clear();
+            snap.EmittedNetClaims = null;
+            if ((mask & UndoAssetMask.Buildings) != 0)
+            {
+                foreach (var building in snap.Buildings)
+                {
+                    m_OwnerPrefabs.Add(building.Prefab);
+                    if (building.Upgrades != null) foreach (var upgrade in building.Upgrades) m_OwnerPrefabs.Add(upgrade.Prefab);
+                    if (building.SubObjectSubs != null) foreach (var sub in building.SubObjectSubs) m_OwnerPrefabs.Add(sub.OwnerDef.m_Prefab);
+                }
+            }
+            snap.Operations = EnumerateOperations(snap, mask).GetEnumerator();
+            snap.ActiveMask = mask;
+            m_NextAllowedFrame = UnityEngine.Time.frameCount;
+            return true;
         }
 
         public bool StartUndo(UndoAssetMask mask)
@@ -1048,8 +1284,34 @@ namespace MarqueeDelete
             return m_Tracker.Pause();
         }
 
+        private struct PrefabSubNetEnv
+        {
+            public TerrainSystem TerrainSystem;
+            public WaterSystem WaterSystem;
+            public bool IsLeftHandTraffic;
+            public bool TerrainAttempted;
+            public bool TerrainAcquired;
+            public bool HasTerrain;
+            public TerrainHeightData TerrainData;
+            public bool WaterAttempted;
+            public bool WaterAcquired;
+            public bool HasWater;
+            public WaterSurfaceData<SurfaceWater> WaterData;
+        }
+
         // Counts successful creation requests, never claims that simulation state was restored.
         public bool Step(EntityManager em, EntityCommandBuffer ecb, out bool completed)
+        {
+            return Step(em, ecb, null, null, false, out completed);
+        }
+
+        public bool Step(
+            EntityManager em,
+            EntityCommandBuffer ecb,
+            TerrainSystem terrainSystem,
+            WaterSystem waterSystem,
+            bool isLeftHandTraffic,
+            out bool completed)
         {
             completed = false;
             if (!IsInProgress) return false;
@@ -1085,128 +1347,161 @@ namespace MarqueeDelete
             double budget = StepTimeBudgetMs * Stopwatch.Frequency / 1000.0;
             int attempted = 0, buildings = 0, networks = 0;
             bool waiting = false, saturated = false, emittedBuildingWithSubNets = false, hitBoundary = false;
-            while (attempted < MaxRequestsPerStep)
+            var env = new PrefabSubNetEnv
             {
-                if (!m_WaitingOperation.HasValue && !snap.Operations.MoveNext())
+                TerrainSystem = terrainSystem,
+                WaterSystem = waterSystem,
+                IsLeftHandTraffic = isLeftHandTraffic,
+            };
+            try
+            {
+                while (attempted < MaxRequestsPerStep)
                 {
-                    snap.Operations.Dispose();
-                    QueueConnectionRefresh(snap);
-                    InvalidateLiveSpatialCaches();
-                    m_Tracker.CompleteActive();
-                    LogRestoreAudit(snap);
-                    completed = true;
-                    return true;
-                }
-                UndoOperation op = m_WaitingOperation ?? snap.Operations.Current;
-                if (op.Kind == UndoOperationKind.Boundary)
-                {
-                    hitBoundary = true;
-                    break;
-                }
-                bool buildingRequest = op.Kind == UndoOperationKind.Building || op.Kind == UndoOperationKind.Upgrade || op.Kind == UndoOperationKind.BuildingUnit;
-                bool networkRequest = op.Kind == UndoOperationKind.Net || op.Kind == UndoOperationKind.Area;
-                if (emittedBuildingWithSubNets ||
-                    attempted >= m_BatchPolicy.SimpleLimit ||
-                    (attempted > 0 && Stopwatch.GetTimestamp() - started >= budget) ||
-                    (buildingRequest && buildings >= m_BatchPolicy.BuildingLimit) ||
-                    (networkRequest && networks >= m_BatchPolicy.NetworkLimit))
-                {
-                    m_WaitingOperation = op;
-                    m_OwnerWaitStarted = -1;
-                    saturated = true;
-                    break;
-                }
-                Entity owner = Entity.Null;
-                bool ownerValid = !op.HasOwner || TryResolveOwner(em, op.Owner, out owner);
-                if (ownerValid && op.AncestorPrefab != Entity.Null)
-                    ownerValid = TryResolveOwner(em, op.Ancestor, out _);
-                bool knownFailure = op.HasOwner && (m_FailedOwners.Contains(op.Owner) ||
-                    (op.AncestorPrefab != Entity.Null && m_FailedOwners.Contains(op.Ancestor)));
-                if (!ownerValid && !knownFailure && (m_OwnerWaitStarted < 0 || frame - m_OwnerWaitStarted < 120))
-                {
-                    if (m_OwnerWaitStarted < 0) m_OwnerWaitStarted = frame;
-                    if (frame - m_OwnerWaitStarted >= 30) m_Tracker.SetNotice("UndoWaitingOwner");
-                    m_WaitingOperation = op;
-                    waiting = true;
-                    break;
-                }
-                if (m_Tracker.Notice == "UndoWaitingOwner")
-                {
-                    m_Tracker.RestoreActiveNotice();
-                }
-                m_WaitingOperation = null;
-                m_OwnerWaitStarted = -1;
-                if (!ownerValid && op.HasOwner)
-                {
-                    // An owner that could not be proven is not a timeout; the UI must not report it as
-                    // one, because waiting longer would never resolve it.
-                    if (!m_FailedOwners.Contains(op.Owner))
+                    if (!m_WaitingOperation.HasValue && !snap.Operations.MoveNext())
                     {
-                        snap.HasOwnerTimeout = true;
+                        snap.Operations.Dispose();
+                        QueueConnectionRefresh(snap);
+                        InvalidateLiveSpatialCaches();
+                        m_Tracker.CompleteActive();
+                        LogRestoreAudit(snap);
+                        completed = true;
+                        return true;
                     }
-                    m_FailedOwners.Add(op.Owner);
-                }
-                bool valid = false;
-                bool handledCounts = false;
-                if (ownerValid) switch (op.Kind)
-                {
-                    case UndoOperationKind.Net:
-                        valid = ValidPrefab<Game.Prefabs.NetData>(em, op.Net.Prefab) &&
-                                (op.Net.IsNodeOnly || IsBezierFinite(op.Net.Curve)) &&
-                                (op.HasOwner || (NetLinksIntact(em, op.Net, op.NetIndex, snap) && LaneEvidenceConfirmed(op.Net)));
-                        if (valid)
+                    UndoOperation op = m_WaitingOperation ?? snap.Operations.Current;
+                    if (op.Kind == UndoOperationKind.Boundary)
+                    {
+                        hitBoundary = true;
+                        break;
+                    }
+                    bool buildingRequest = op.Kind == UndoOperationKind.Building || op.Kind == UndoOperationKind.Upgrade || op.Kind == UndoOperationKind.BuildingUnit || op.Kind == UndoOperationKind.SubObjectUnit;
+                    bool networkRequest = op.Kind == UndoOperationKind.Net || op.Kind == UndoOperationKind.Area;
+                    if (emittedBuildingWithSubNets ||
+                        attempted >= m_BatchPolicy.SimpleLimit ||
+                        (attempted > 0 && Stopwatch.GetTimestamp() - started >= budget) ||
+                        (buildingRequest && buildings >= m_BatchPolicy.BuildingLimit) ||
+                        (networkRequest && networks >= m_BatchPolicy.NetworkLimit))
+                    {
+                        m_WaitingOperation = op;
+                        m_OwnerWaitStarted = -1;
+                        saturated = true;
+                        break;
+                    }
+                    Entity owner = Entity.Null;
+                    bool ownerValid = !op.HasOwner || TryResolveOwner(em, op.Owner, out owner);
+                    if (ownerValid && op.AncestorPrefab != Entity.Null)
+                        ownerValid = TryResolveOwner(em, op.Ancestor, out _);
+                    bool knownFailure = op.HasOwner && (m_FailedOwners.Contains(op.Owner) ||
+                        (op.AncestorPrefab != Entity.Null && m_FailedOwners.Contains(op.Ancestor)));
+                    if (!ownerValid && !knownFailure && (m_OwnerWaitStarted < 0 || frame - m_OwnerWaitStarted < 120))
+                    {
+                        if (m_OwnerWaitStarted < 0) m_OwnerWaitStarted = frame;
+                        if (frame - m_OwnerWaitStarted >= 30) m_Tracker.SetNotice("UndoWaitingOwner");
+                        m_WaitingOperation = op;
+                        waiting = true;
+                        break;
+                    }
+                    if (m_Tracker.Notice == "UndoWaitingOwner")
+                    {
+                        m_Tracker.RestoreActiveNotice();
+                    }
+                    m_WaitingOperation = null;
+                    m_OwnerWaitStarted = -1;
+                    if (!ownerValid && op.HasOwner)
+                    {
+                        // An owner that could not be proven is not a timeout; the UI must not report it as
+                        // one, because waiting longer would never resolve it.
+                        if (!m_FailedOwners.Contains(op.Owner))
                         {
-                            float liveNodeTolerance = snap.Verdicts == null ? 2.0f : NetConnectivityPolicy.EndpointTolerance;
-                            Entity submittedStart, submittedEnd;
-                            if (EmitNetRecord(em, ecb, op.Net, op.HasOwner, owner, liveNodeTolerance, out submittedStart, out submittedEnd))
+                            snap.HasOwnerTimeout = true;
+                        }
+                        m_FailedOwners.Add(op.Owner);
+                    }
+                    bool valid = false;
+                    bool handledCounts = false;
+                    if (op.Kind == UndoOperationKind.SubObjectUnit)
+                    {
+                        handledCounts = true;
+                        if (!ownerValid)
+                        {
+                            snap.SkippedCount += CountSubObjectUnitItems(op.SubObjectSubs);
+                        }
+                        else
+                        {
+                            valid = EmitSubObjectUnit(em, ecb, snap, op.SubObjectSubs, owner, ref env, out bool subEmittedSubNets);
+                            if (subEmittedSubNets) emittedBuildingWithSubNets = true;
+                        }
+                    }
+                    else if (ownerValid) switch (op.Kind)
+                    {
+                        case UndoOperationKind.Net:
+                            valid = ValidPrefab<Game.Prefabs.NetData>(em, op.Net.Prefab) &&
+                                    (op.Net.IsNodeOnly || IsBezierFinite(op.Net.Curve)) &&
+                                    (op.HasOwner || (NetLinksIntact(em, op.Net, op.NetIndex, snap) && LaneEvidenceConfirmed(op.Net)));
+                            if (valid)
                             {
-                                if (!op.HasOwner)
+                                float liveNodeTolerance = snap.Verdicts == null ? 2.0f : NetConnectivityPolicy.EndpointTolerance;
+                                Entity submittedStart, submittedEnd;
+                                if (EmitNetRecord(em, ecb, op.Net, op.HasOwner, owner, liveNodeTolerance, out submittedStart, out submittedEnd))
                                 {
-                                    // Remembered so a later re-decide (after a pause) can recognise this
-                                    // segment as this undo's own work instead of a road the player spliced
-                                    // in. The submitted endpoints are kept, not the recorded ones: a dead
-                                    // junction is submitted as Entity.Null and the game builds a new one.
-                                    snap.EmittedNets.Add(new EmittedNet
+                                    if (!op.HasOwner)
                                     {
-                                        Prefab = op.Net.Prefab,
-                                        Length = op.Net.Length,
-                                        SubmittedStart = submittedStart,
-                                        SubmittedEnd = submittedEnd,
-                                        RecordedStartPos = op.Net.StartPos,
-                                        RecordedEndPos = op.Net.EndPos,
-                                    });
-                                    snap.EmittedNetIndices.Add(op.NetIndex);
+                                        // Remembered so a later re-decide (after a pause) can recognise this
+                                        // segment as this undo's own work instead of a road the player spliced
+                                        // in. The submitted endpoints are kept, not the recorded ones: a dead
+                                        // junction is submitted as Entity.Null and the game builds a new one.
+                                        snap.EmittedNets.Add(new EmittedNet
+                                        {
+                                            Prefab = op.Net.Prefab,
+                                            Length = op.Net.Length,
+                                            SubmittedStart = submittedStart,
+                                            SubmittedEnd = submittedEnd,
+                                            RecordedStartPos = op.Net.StartPos,
+                                            RecordedEndPos = op.Net.EndPos,
+                                        });
+                                        snap.EmittedNetIndices.Add(op.NetIndex);
+                                    }
+                                }
+                                else
+                                {
+                                    valid = false;
                                 }
                             }
-                            else
-                            {
-                                valid = false;
-                            }
-                        }
-                        break;
-                    case UndoOperationKind.Area: valid = ValidPrefab<Game.Prefabs.AreaData>(em, op.Area.Prefab) && op.Area.Nodes != null && op.Area.Nodes.Length >= 3; if (valid) EmitAreaRecord(em, ecb, op.Area, op.HasOwner, owner); break;
-                    case UndoOperationKind.Building: valid = ValidObject(em, op.Building.Prefab, op.Building.Position, op.Building.Rotation) && !OccupiedBeforeRestore(op.Building.Prefab, op.Building.Position); if (valid) EmitBuildingRoot(em, ecb, op.Building); break;
-                    case UndoOperationKind.Upgrade: valid = ValidObject(em, op.Upgrade.Prefab, op.Upgrade.Position, op.Upgrade.Rotation); if (valid) EmitUpgrade(em, ecb, op.Upgrade, owner); break;
-                    case UndoOperationKind.Object: valid = ValidObject(em, op.Object.Prefab, op.Object.Position, op.Object.Rotation); if (valid) EmitObjectRecord(em, ecb, op.Object); break;
-                    case UndoOperationKind.BuildingUnit:
-                        handledCounts = true;
-                        valid = EmitBuildingUnit(em, ecb, snap, op.Building, out bool emittedSubNets);
-                        if (emittedSubNets) emittedBuildingWithSubNets = true;
-                        break;
-                }
-                if (!handledCounts)
-                {
-                    if (valid) snap.RestoredCount++;
-                    else
-                    {
-                        snap.SkippedCount++;
-                        if (op.Kind == UndoOperationKind.Building) m_FailedOwners.Add(new OwnerDefinition { m_Prefab = op.Building.Prefab, m_Position = op.Building.Position, m_Rotation = op.Building.Rotation });
-                        if (op.Kind == UndoOperationKind.Upgrade) m_FailedOwners.Add(new OwnerDefinition { m_Prefab = op.Upgrade.Prefab, m_Position = op.Upgrade.Position, m_Rotation = op.Upgrade.Rotation });
+                            break;
+                        case UndoOperationKind.Area: valid = ValidPrefab<Game.Prefabs.AreaData>(em, op.Area.Prefab) && op.Area.Nodes != null && op.Area.Nodes.Length >= 3; if (valid) EmitAreaRecord(em, ecb, op.Area, op.HasOwner, owner); break;
+                        case UndoOperationKind.Building: valid = ValidObject(em, op.Building.Prefab, op.Building.Position, op.Building.Rotation) && !OccupiedBeforeRestore(op.Building.Prefab, op.Building.Position); if (valid) EmitBuildingRoot(em, ecb, op.Building); break;
+                        case UndoOperationKind.Upgrade: valid = ValidObject(em, op.Upgrade.Prefab, op.Upgrade.Position, op.Upgrade.Rotation); if (valid) EmitUpgrade(em, ecb, op.Upgrade, owner); break;
+                        case UndoOperationKind.Object: valid = ValidObject(em, op.Object.Prefab, op.Object.Position, op.Object.Rotation); if (valid) EmitObjectRecord(em, ecb, op.Object); break;
+                        case UndoOperationKind.BuildingUnit:
+                            handledCounts = true;
+                            valid = EmitBuildingUnit(em, ecb, snap, op.Building, ref env, out bool emittedSubNets);
+                            if (emittedSubNets) emittedBuildingWithSubNets = true;
+                            break;
                     }
+                    if (!handledCounts)
+                    {
+                        if (valid) snap.RestoredCount++;
+                        else
+                        {
+                            snap.SkippedCount++;
+                            if (op.Kind == UndoOperationKind.Building) m_FailedOwners.Add(new OwnerDefinition { m_Prefab = op.Building.Prefab, m_Position = op.Building.Position, m_Rotation = op.Building.Rotation });
+                            if (op.Kind == UndoOperationKind.Upgrade) m_FailedOwners.Add(new OwnerDefinition { m_Prefab = op.Upgrade.Prefab, m_Position = op.Upgrade.Position, m_Rotation = op.Upgrade.Rotation });
+                        }
+                    }
+                    attempted++;
+                    if (buildingRequest) buildings++;
+                    if (networkRequest) networks++;
                 }
-                attempted++;
-                if (buildingRequest) buildings++;
-                if (networkRequest) networks++;
+            }
+            finally
+            {
+                if (env.TerrainAcquired && env.TerrainSystem != null)
+                {
+                    env.TerrainSystem.AddCPUHeightReader(default(JobHandle));
+                }
+                if (env.WaterAcquired && env.WaterSystem != null)
+                {
+                    env.WaterSystem.AddSurfaceReader(default(JobHandle));
+                }
             }
             double elapsedMs = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
             m_BatchPolicy.FinishBatch(elapsedMs, saturated || attempted == MaxRequestsPerStep, waiting);
@@ -1283,20 +1578,15 @@ namespace MarqueeDelete
                             for (int s = 0; s < building.SubObjectSubs.Count; s++)
                             {
                                 UndoSubObjectSubs sub = building.SubObjectSubs[s];
-                                if (sub.SubAreas != null)
+                                yield return new UndoOperation
                                 {
-                                    foreach (var area in sub.SubAreas)
-                                    {
-                                        yield return new UndoOperation { Kind = UndoOperationKind.Area, Area = area, HasOwner = true, AncestorPrefab = building.Prefab, Ancestor = bldOwner, Owner = sub.OwnerDef };
-                                    }
-                                }
-                                if (sub.SubNets != null)
-                                {
-                                    foreach (var net in sub.SubNets)
-                                    {
-                                        yield return new UndoOperation { Kind = UndoOperationKind.Net, Net = net, NetIndex = netIndex++, HasOwner = true, AncestorPrefab = building.Prefab, Ancestor = bldOwner, Owner = sub.OwnerDef };
-                                    }
-                                }
+                                    Kind = UndoOperationKind.SubObjectUnit,
+                                    SubObjectSubs = sub,
+                                    HasOwner = true,
+                                    AncestorPrefab = building.Prefab,
+                                    Ancestor = bldOwner,
+                                    Owner = sub.OwnerDef,
+                                };
                             }
                         }
                     }
@@ -1310,11 +1600,34 @@ namespace MarqueeDelete
                             {
                                 if (building.HasOwnerSubBuffer && upgrade.IsPhysical) continue;
                                 yield return new UndoOperation { Kind = UndoOperationKind.Upgrade, Upgrade = upgrade, HasOwner = true, Owner = owner };
-                                if ((upgrade.SubAreas != null && upgrade.SubAreas.Count > 0) || (upgrade.SubNets != null && upgrade.SubNets.Count > 0))
+                                bool hasUpgradeChildren = (upgrade.SubAreas != null && upgrade.SubAreas.Count > 0) ||
+                                                          upgrade.PrefabSubNetCount > 0 ||
+                                                          (upgrade.SubNets != null && upgrade.SubNets.Count > 0);
+                                if (hasUpgradeChildren)
                                     yield return new UndoOperation { Kind = UndoOperationKind.Boundary };
                                 var upgradeOwner = new OwnerDefinition { m_Prefab = upgrade.Prefab, m_Position = upgrade.Position, m_Rotation = upgrade.Rotation };
                                 if (upgrade.SubAreas != null) foreach (var area in upgrade.SubAreas) yield return new UndoOperation { Kind = UndoOperationKind.Area, Area = area, HasOwner = true, AncestorPrefab = building.Prefab, Ancestor = owner, Owner = upgradeOwner };
-                                if (upgrade.SubNets != null) foreach (var net in upgrade.SubNets) yield return new UndoOperation { Kind = UndoOperationKind.Net, Net = net, NetIndex = netIndex++, HasOwner = true, AncestorPrefab = building.Prefab, Ancestor = owner, Owner = upgradeOwner };
+                                if (upgrade.PrefabSubNetCount > 0)
+                                {
+                                    yield return new UndoOperation
+                                    {
+                                        Kind = UndoOperationKind.SubObjectUnit,
+                                        SubObjectSubs = new UndoSubObjectSubs
+                                        {
+                                            OwnerDef = upgradeOwner,
+                                            Seed = upgrade.Seed,
+                                            PrefabSubNetCount = upgrade.PrefabSubNetCount,
+                                        },
+                                        HasOwner = true,
+                                        AncestorPrefab = building.Prefab,
+                                        Ancestor = owner,
+                                        Owner = upgradeOwner,
+                                    };
+                                }
+                                else if (upgrade.SubNets != null)
+                                {
+                                    foreach (var net in upgrade.SubNets) yield return new UndoOperation { Kind = UndoOperationKind.Net, Net = net, NetIndex = netIndex++, HasOwner = true, AncestorPrefab = building.Prefab, Ancestor = owner, Owner = upgradeOwner };
+                                }
                             }
                         }
                     }
@@ -2683,6 +2996,13 @@ namespace MarqueeDelete
             return true;
         }
 
+        private static int GetPrefabSubNetCount(EntityManager em, Entity prefab)
+        {
+            return prefab != Entity.Null && em.Exists(prefab) && em.HasBuffer<Game.Prefabs.SubNet>(prefab)
+                ? em.GetBuffer<Game.Prefabs.SubNet>(prefab, true).Length
+                : 0;
+        }
+
         private static bool TryCaptureBuildingRecord(
             EntityManager em,
             Entity entity,
@@ -2722,7 +3042,17 @@ namespace MarqueeDelete
 
             recordedWeight++;
             List<UndoAreaRecord> subAreas = CaptureSubAreas(em, entity, ref recordedWeight, ref truncated, ref notCaptured);
-            List<UndoNetRecord> subNets = CaptureSubNets(em, entity, ref recordedWeight, ref truncated, ref notCaptured);
+            int prefabSubNetCount = GetPrefabSubNetCount(em, prefab);
+            List<UndoNetRecord> subNets = null;
+            if (prefabSubNetCount > 0)
+            {
+                recordedWeight += prefabSubNetCount;
+                if (recordedWeight > MaxEntitiesPerSnapshot) truncated = true;
+            }
+            else
+            {
+                subNets = CaptureSubNets(em, entity, ref recordedWeight, ref truncated, ref notCaptured);
+            }
             List<UndoUpgradeRecord> upgrades = CaptureInstalledUpgrades(em, entity, tr, ref recordedWeight, ref truncated, ref notCaptured, out HashSet<Entity> upgradeSet);
             List<UndoSubObjectSubs> subObjectSubs = CaptureSubObjectSubs(em, entity, upgradeSet, ref recordedWeight, ref truncated, ref notCaptured);
 
@@ -2742,6 +3072,7 @@ namespace MarqueeDelete
                 AttachedInfo = CaptureAttachedRef(em, attachedParent),
                 HasOwnerSubBuffer = hasOwnerSubBuffer,
                 Seed = ReadSeed(em, entity, prefab),
+                PrefabSubNetCount = prefabSubNetCount,
                 Upgrades = upgrades,
                 SubAreas = subAreas,
                 SubNets = subNets,
@@ -2803,14 +3134,26 @@ namespace MarqueeDelete
                 var subTr = em.GetComponentData<Game.Objects.Transform>(subObj);
                 if (!IsFinite(subTr.m_Position) || !IsFinite(subTr.m_Rotation)) continue;
 
+                int prefabSubNetCount = GetPrefabSubNetCount(em, subPrefab);
                 List<UndoAreaRecord> subAreas = CaptureSubAreas(em, subObj, ref recordedWeight, ref truncated, ref notCaptured);
-                List<UndoNetRecord> subNets = CaptureSubNets(em, subObj, ref recordedWeight, ref truncated, ref notCaptured);
-                if ((subAreas != null && subAreas.Count > 0) || (subNets != null && subNets.Count > 0))
+                List<UndoNetRecord> subNets = null;
+                if (prefabSubNetCount > 0)
+                {
+                    recordedWeight += prefabSubNetCount;
+                    if (recordedWeight > MaxEntitiesPerSnapshot) truncated = true;
+                }
+                else
+                {
+                    subNets = CaptureSubNets(em, subObj, ref recordedWeight, ref truncated, ref notCaptured);
+                }
+                if ((subAreas != null && subAreas.Count > 0) || prefabSubNetCount > 0 || (subNets != null && subNets.Count > 0))
                 {
                     results ??= new List<UndoSubObjectSubs>();
                     results.Add(new UndoSubObjectSubs
                     {
                         OwnerDef = new OwnerDefinition { m_Prefab = subPrefab, m_Position = subTr.m_Position, m_Rotation = subTr.m_Rotation },
+                        Seed = ReadSeed(em, subObj, subPrefab),
+                        PrefabSubNetCount = prefabSubNetCount,
                         SubAreas = subAreas,
                         SubNets = subNets,
                     });
@@ -2910,6 +3253,21 @@ namespace MarqueeDelete
                 recordedWeight++;
                 upgradeSet ??= new HashSet<Entity>();
                 upgradeSet.Add(upg);
+                int upgPrefabSubNetCount = hasTransform ? GetPrefabSubNetCount(em, prefab) : 0;
+                List<UndoAreaRecord> upgSubAreas = hasTransform ? CaptureSubAreas(em, upg, ref recordedWeight, ref truncated, ref notCaptured) : null;
+                List<UndoNetRecord> upgSubNets = null;
+                if (hasTransform)
+                {
+                    if (upgPrefabSubNetCount > 0)
+                    {
+                        recordedWeight += upgPrefabSubNetCount;
+                        if (recordedWeight > MaxEntitiesPerSnapshot) truncated = true;
+                    }
+                    else
+                    {
+                        upgSubNets = CaptureSubNets(em, upg, ref recordedWeight, ref truncated, ref notCaptured);
+                    }
+                }
                 list ??= new List<UndoUpgradeRecord>(buf.Length);
                 list.Add(new UndoUpgradeRecord
                 {
@@ -2923,8 +3281,9 @@ namespace MarqueeDelete
                     IsPhysical = isPhysical,
                     HasOwnerSubBuffer = hasOwnerSubBuffer,
                     ParentMesh = parentMesh,
-                    SubAreas = hasTransform ? CaptureSubAreas(em, upg, ref recordedWeight, ref truncated, ref notCaptured) : null,
-                    SubNets = hasTransform ? CaptureSubNets(em, upg, ref recordedWeight, ref truncated, ref notCaptured) : null,
+                    PrefabSubNetCount = upgPrefabSubNetCount,
+                    SubAreas = upgSubAreas,
+                    SubNets = upgSubNets,
                 });
             }
 
@@ -3129,8 +3488,7 @@ namespace MarqueeDelete
             {
                 if (!IsFinite(rec.StartPos) || !IsFinite(rec.StartRot)) return false;
                 CoursePosFlags nodeFlags = CoursePosFlags.IsFirst | CoursePosFlags.IsLast;
-                if (hasOwner) nodeFlags |= CoursePosFlags.DisableMerge;
-                else if (HasSignificantElevation(rec.StartElevation, rec.EdgeElevation)) nodeFlags |= CoursePosFlags.FreeHeight;
+                if (!hasOwner && HasSignificantElevation(rec.StartElevation, rec.EdgeElevation)) nodeFlags |= CoursePosFlags.FreeHeight;
 
                 var nodeCourse = new NetCourse
                 {
@@ -3251,12 +3609,7 @@ namespace MarqueeDelete
 
             CoursePosFlags startFlags = CoursePosFlags.IsFirst;
             CoursePosFlags endFlags = CoursePosFlags.IsLast;
-            if (hasOwner)
-            {
-                if (rec.StartNodeOwnedByParent) startFlags |= CoursePosFlags.DisableMerge;
-                if (rec.EndNodeOwnedByParent) endFlags |= CoursePosFlags.DisableMerge;
-            }
-            else
+            if (!hasOwner)
             {
                 if (HasSignificantElevation(rec.StartElevation, rec.EdgeElevation))
                 {
@@ -3542,10 +3895,7 @@ namespace MarqueeDelete
             if (rec.IsNodeOnly)
             {
                 if (!IsFinite(rec.StartPos) || !IsFinite(rec.StartRot)) return false;
-                // Match vanilla ZoneSpawnSystem.CreateSubNet: owned building SubNets keep DisableMerge
-                // (so CourseSplitSystem doesn't split/merge them into roads) and omit FreeHeight;
-                // GenerateNodesSystem/GenerateEdgesSystem LocalConnect only checks IsFirst|IsLast.
-                CoursePosFlags flags = CoursePosFlags.IsFirst | CoursePosFlags.IsLast | CoursePosFlags.DisableMerge;
+                CoursePosFlags flags = CoursePosFlags.IsFirst | CoursePosFlags.IsLast;
 
                 var nodeCourse = new NetCourse
                 {
@@ -3623,15 +3973,8 @@ namespace MarqueeDelete
                 }
             }
 
-            // Match vanilla ZoneSpawnSystem.CreateSubNet: set DisableMerge on building-owned endpoints
-            // so CourseSplitSystem.FindOverlapsJob does not split/corrupt driveways against passing
-            // roads, while external street-connected endpoints omit DisableMerge so they weld cleanly.
-            // Neither ZoneSpawnSystem nor ObjectToolBaseSystem sets FreeHeight on owned SubNets.
             CoursePosFlags startFlags = CoursePosFlags.IsFirst;
-            if (rec.StartNodeOwnedByParent) startFlags |= CoursePosFlags.DisableMerge;
-
             CoursePosFlags endFlags = CoursePosFlags.IsLast;
-            if (rec.EndNodeOwnedByParent) endFlags |= CoursePosFlags.DisableMerge;
 
             float3 startPos = rec.StartPos;
             float3 endPos = rec.EndPos;
@@ -3800,7 +4143,7 @@ namespace MarqueeDelete
         {
             int count = 1;
             if (building.SubAreas != null) count += building.SubAreas.Count;
-            if (building.SubNets != null) count += building.SubNets.Count;
+            count += building.PrefabSubNetCount > 0 ? building.PrefabSubNetCount : (building.SubNets?.Count ?? 0);
             if (building.Upgrades != null && building.HasOwnerSubBuffer)
             {
                 for (int i = 0; i < building.Upgrades.Count; i++)
@@ -3809,10 +4152,353 @@ namespace MarqueeDelete
                     if (!upg.IsPhysical) continue;
                     count++;
                     if (upg.SubAreas != null) count += upg.SubAreas.Count;
-                    if (upg.SubNets != null) count += upg.SubNets.Count;
+                    count += upg.PrefabSubNetCount > 0 ? upg.PrefabSubNetCount : (upg.SubNets?.Count ?? 0);
                 }
             }
             return count;
+        }
+
+        private static int CountSubObjectUnitItems(in UndoSubObjectSubs sub)
+        {
+            int count = sub.SubAreas != null ? sub.SubAreas.Count : 0;
+            count += sub.PrefabSubNetCount > 0 ? sub.PrefabSubNetCount : (sub.SubNets?.Count ?? 0);
+            return count;
+        }
+
+        private static void EmitPrefabSubNets(
+            EntityManager em,
+            EntityCommandBuffer ecb,
+            Entity ownerPrefab,
+            Game.Objects.Transform ownerTransform,
+            in OwnerDefinition ownerDef,
+            Entity liveOwnerEntity,
+            int baseSeed,
+            int expectedCount,
+            ref PrefabSubNetEnv env,
+            out int emittedCount,
+            out int skippedCount)
+        {
+            emittedCount = 0;
+            skippedCount = 0;
+            if (ownerPrefab == Entity.Null || !em.Exists(ownerPrefab) || !em.HasBuffer<Game.Prefabs.SubNet>(ownerPrefab) ||
+                !IsFinite(ownerTransform.m_Position) || !IsFinite(ownerTransform.m_Rotation))
+            {
+                skippedCount = expectedCount;
+                return;
+            }
+
+            DynamicBuffer<Game.Prefabs.SubNet> prefabSubNets = em.GetBuffer<Game.Prefabs.SubNet>(ownerPrefab, true);
+            if (prefabSubNets.Length == 0)
+            {
+                skippedCount = expectedCount;
+                return;
+            }
+
+            if (!env.TerrainAttempted)
+            {
+                env.TerrainAttempted = true;
+                if (env.TerrainSystem != null)
+                {
+                    env.TerrainData = env.TerrainSystem.GetHeightData(waitForPending: true);
+                    env.TerrainAcquired = true;
+                    env.HasTerrain = env.TerrainData.isCreated;
+                }
+            }
+
+            // Pass 1: average local endpoint positions per shared m_NodeIndex (matching ObjectToolBaseSystem.UpdateSubNets).
+            var nodePositions = new List<float4>(prefabSubNets.Length * 2);
+            for (int i = 0; i < prefabSubNets.Length; i++)
+            {
+                Game.Prefabs.SubNet rawSn = prefabSubNets[i];
+                if (rawSn.m_NodeIndex.x >= 0)
+                {
+                    while (nodePositions.Count <= rawSn.m_NodeIndex.x)
+                    {
+                        nodePositions.Add(float4.zero);
+                    }
+                    nodePositions[rawSn.m_NodeIndex.x] += new float4(rawSn.m_Curve.a, 1f);
+                }
+                if (rawSn.m_NodeIndex.y >= 0)
+                {
+                    while (nodePositions.Count <= rawSn.m_NodeIndex.y)
+                    {
+                        nodePositions.Add(float4.zero);
+                    }
+                    nodePositions[rawSn.m_NodeIndex.y] += new float4(rawSn.m_Curve.d, 1f);
+                }
+            }
+            for (int k = 0; k < nodePositions.Count; k++)
+            {
+                nodePositions[k] /= math.max(1f, nodePositions[k].w);
+            }
+
+            // Pass 2: replicate NetUtils.GetSubNet + CreateSubNet per prefab SubNet entry.
+            for (int i = 0; i < prefabSubNets.Length; i++)
+            {
+                Game.Prefabs.SubNet sn = prefabSubNets[i];
+                if (!ValidPrefab<Game.Prefabs.NetData>(em, sn.m_Prefab))
+                {
+                    skippedCount++;
+                    continue;
+                }
+
+                bool hasNetGeo = em.HasComponent<NetGeometryData>(sn.m_Prefab);
+                NetGeometryData netGeo = hasNetGeo ? em.GetComponentData<NetGeometryData>(sn.m_Prefab) : default;
+
+                if (NetUtils.ShouldInvert(sn.m_InvertMode, env.IsLeftHandTraffic))
+                {
+                    if (hasNetGeo && (netGeo.m_Flags & Game.Net.GeometryFlags.FlipTrafficHandedness) != 0)
+                    {
+                        sn.m_Curve = MathUtils.Invert(sn.m_Curve);
+                        sn.m_NodeIndex = sn.m_NodeIndex.yx;
+                        sn.m_ParentMesh = sn.m_ParentMesh.yx;
+                        NetUtils.FixInvertedUpgradeTrafficHandedness(ref sn.m_Upgrades);
+                    }
+                    else
+                    {
+                        NetUtils.FlipUpgradeTrafficHandedness(ref sn.m_Upgrades);
+                    }
+                }
+
+                Bezier4x3 localCurve = sn.m_Curve;
+                if (!IsBezierFinite(localCurve))
+                {
+                    skippedCount++;
+                    continue;
+                }
+
+                bool onWater = hasNetGeo && (netGeo.m_Flags & Game.Net.GeometryFlags.OnWater) != 0;
+                bool flattenTerrain = hasNetGeo && (netGeo.m_Flags & Game.Net.GeometryFlags.FlattenTerrain) != 0;
+                bool bothFixed = sn.m_ParentMesh.x >= 0 && sn.m_ParentMesh.y >= 0;
+
+                Bezier4x3 worldCurve;
+                if (onWater)
+                {
+                    if (!env.WaterAttempted)
+                    {
+                        env.WaterAttempted = true;
+                        if (env.WaterSystem != null)
+                        {
+                            env.WaterData = env.WaterSystem.GetSurfaceData(out JobHandle waterDeps);
+                            waterDeps.Complete();
+                            env.WaterAcquired = true;
+                            env.HasWater = env.WaterData.isCreated;
+                        }
+                    }
+
+                    localCurve.y = default(Bezier4x1);
+                    worldCurve = ObjectUtils.LocalToWorld(ownerTransform.m_Position, ownerTransform.m_Rotation, localCurve);
+                    if (env.HasTerrain && env.HasWater)
+                    {
+                        worldCurve = NetUtils.AdjustPosition(
+                            new Game.Net.Curve { m_Bezier = worldCurve },
+                            false, false, false,
+                            ref env.TerrainData, ref env.WaterData).m_Bezier;
+                    }
+                }
+                else if (!bothFixed)
+                {
+                    worldCurve = ObjectUtils.LocalToWorld(ownerTransform.m_Position, ownerTransform.m_Rotation, localCurve);
+                    if (!flattenTerrain && env.HasTerrain)
+                    {
+                        bool startFixed = sn.m_ParentMesh.x >= 0;
+                        bool endFixed = sn.m_ParentMesh.y >= 0;
+                        worldCurve = NetUtils.AdjustPosition(
+                            new Game.Net.Curve { m_Bezier = worldCurve },
+                            startFixed, startFixed || endFixed, endFixed,
+                            ref env.TerrainData).m_Bezier;
+                        worldCurve.a.y += localCurve.a.y;
+                        worldCurve.b.y += localCurve.b.y;
+                        worldCurve.c.y += localCurve.c.y;
+                        worldCurve.d.y += localCurve.d.y;
+                    }
+                }
+                else
+                {
+                    worldCurve = ObjectUtils.LocalToWorld(ownerTransform.m_Position, ownerTransform.m_Rotation, localCurve);
+                }
+
+                float3 startPos = worldCurve.a;
+                if (sn.m_NodeIndex.x >= 0 && sn.m_NodeIndex.x < nodePositions.Count)
+                {
+                    float3 avgWorld = ObjectUtils.LocalToWorld(ownerTransform, nodePositions[sn.m_NodeIndex.x].xyz);
+                    if (onWater && env.HasTerrain && env.HasWater)
+                    {
+                        startPos.xz = avgWorld.xz;
+                        startPos.y = WaterUtils.SampleHeight(ref env.WaterData, ref env.TerrainData, startPos);
+                    }
+                    else
+                    {
+                        startPos = avgWorld;
+                    }
+                }
+
+                float3 endPos = worldCurve.d;
+                if (sn.m_NodeIndex.y >= 0 && sn.m_NodeIndex.y < nodePositions.Count)
+                {
+                    float3 avgWorld = ObjectUtils.LocalToWorld(ownerTransform, nodePositions[sn.m_NodeIndex.y].xyz);
+                    if (onWater && env.HasTerrain && env.HasWater)
+                    {
+                        endPos.xz = avgWorld.xz;
+                        endPos.y = WaterUtils.SampleHeight(ref env.WaterData, ref env.TerrainData, endPos);
+                    }
+                    else
+                    {
+                        endPos = avgWorld;
+                    }
+                }
+
+                CoursePosFlags startFlags = CoursePosFlags.IsFirst;
+                CoursePosFlags endFlags = CoursePosFlags.IsLast;
+                if (startPos.Equals(endPos))
+                {
+                    startFlags |= CoursePosFlags.IsLast;
+                    endFlags |= CoursePosFlags.IsFirst;
+                }
+
+                int seed = unchecked((baseSeed * 397) ^ (i + 1) ^ sn.m_Prefab.Index);
+                if (seed == 0) seed = i + 1;
+
+                Entity carrier = ecb.CreateEntity();
+                ecb.AddComponent(carrier, new CreationDefinition
+                {
+                    m_Prefab = sn.m_Prefab,
+                    m_Owner = liveOwnerEntity,
+                    m_Flags = CreationFlags.Permanent,
+                    m_RandomSeed = seed,
+                });
+                if (liveOwnerEntity == Entity.Null)
+                {
+                    ecb.AddComponent(carrier, ownerDef);
+                }
+                ecb.AddComponent(carrier, new NetCourse
+                {
+                    m_StartPosition = new CoursePos
+                    {
+                        m_Entity = Entity.Null,
+                        m_Position = startPos,
+                        m_Rotation = NetUtils.GetNodeRotation(MathUtils.StartTangent(worldCurve), ownerTransform.m_Rotation),
+                        m_Elevation = new float2(localCurve.a.y),
+                        m_CourseDelta = 0f,
+                        m_SplitPosition = 0f,
+                        m_Flags = startFlags,
+                        m_ParentMesh = sn.m_ParentMesh.x,
+                    },
+                    m_EndPosition = new CoursePos
+                    {
+                        m_Entity = Entity.Null,
+                        m_Position = endPos,
+                        m_Rotation = NetUtils.GetNodeRotation(MathUtils.EndTangent(worldCurve), ownerTransform.m_Rotation),
+                        m_Elevation = new float2(localCurve.d.y),
+                        m_CourseDelta = 1f,
+                        m_SplitPosition = 0f,
+                        m_Flags = endFlags,
+                        m_ParentMesh = sn.m_ParentMesh.y,
+                    },
+                    m_Curve = worldCurve,
+                    m_Elevation = float2.zero,
+                    m_Length = MathUtils.Length(worldCurve),
+                    m_FixedIndex = -1,
+                });
+                if (sn.m_Upgrades != default(CompositionFlags))
+                {
+                    ecb.AddComponent(carrier, new Upgraded { m_Flags = sn.m_Upgrades });
+                }
+                ecb.AddComponent<Updated>(carrier);
+                ecb.AddComponent<Deleted>(carrier);
+                emittedCount++;
+            }
+
+            if (emittedCount + skippedCount < expectedCount)
+            {
+                skippedCount += expectedCount - (emittedCount + skippedCount);
+            }
+        }
+
+        private bool EmitSubObjectUnit(
+            EntityManager em,
+            EntityCommandBuffer ecb,
+            UndoSnapshot snap,
+            in UndoSubObjectSubs sub,
+            Entity liveOwner,
+            ref PrefabSubNetEnv env,
+            out bool emittedSubNets)
+        {
+            emittedSubNets = false;
+            int restored = 0;
+            int skipped = 0;
+
+            if (sub.SubAreas != null)
+            {
+                for (int i = 0; i < sub.SubAreas.Count; i++)
+                {
+                    UndoAreaRecord area = sub.SubAreas[i];
+                    if (ValidPrefab<Game.Prefabs.AreaData>(em, area.Prefab) && area.Nodes != null && area.Nodes.Length >= 3)
+                    {
+                        EmitAreaRecord(em, ecb, area, true, liveOwner);
+                        restored++;
+                    }
+                    else
+                    {
+                        skipped++;
+                    }
+                }
+            }
+
+            if (sub.PrefabSubNetCount > 0)
+            {
+                int seed = sub.Seed != 0 ? sub.Seed : 1;
+                Game.Objects.Transform ownerTr = new Game.Objects.Transform
+                {
+                    m_Position = sub.OwnerDef.m_Position,
+                    m_Rotation = sub.OwnerDef.m_Rotation,
+                };
+                if (liveOwner != Entity.Null && em.Exists(liveOwner) && em.HasComponent<Game.Objects.Transform>(liveOwner))
+                {
+                    Game.Objects.Transform liveTr = em.GetComponentData<Game.Objects.Transform>(liveOwner);
+                    if (IsFinite(liveTr.m_Position) && IsFinite(liveTr.m_Rotation))
+                    {
+                        ownerTr = liveTr;
+                    }
+                }
+                EmitPrefabSubNets(
+                    em,
+                    ecb,
+                    sub.OwnerDef.m_Prefab,
+                    ownerTr,
+                    default(OwnerDefinition),
+                    liveOwner,
+                    seed,
+                    sub.PrefabSubNetCount,
+                    ref env,
+                    out int subRestored,
+                    out int subSkipped);
+                restored += subRestored;
+                skipped += subSkipped;
+                if (subRestored > 0) emittedSubNets = true;
+            }
+            else if (sub.SubNets != null)
+            {
+                for (int i = 0; i < sub.SubNets.Count; i++)
+                {
+                    UndoNetRecord net = sub.SubNets[i];
+                    if (ValidPrefab<Game.Prefabs.NetData>(em, net.Prefab) &&
+                        (net.IsNodeOnly || IsBezierFinite(net.Curve)) &&
+                        EmitNetRecord(em, ecb, net, true, liveOwner, 2.0f, out _, out _))
+                    {
+                        restored++;
+                        emittedSubNets = true;
+                    }
+                    else
+                    {
+                        skipped++;
+                    }
+                }
+            }
+
+            snap.RestoredCount += restored;
+            snap.SkippedCount += skipped;
+            return restored > 0;
         }
 
         private bool EmitBuildingUnit(
@@ -3820,6 +4506,7 @@ namespace MarqueeDelete
             EntityCommandBuffer ecb,
             UndoSnapshot snap,
             in UndoBuildingRecord building,
+            ref PrefabSubNetEnv env,
             out bool emittedSubNets)
         {
             emittedSubNets = false;
@@ -3846,7 +4533,26 @@ namespace MarqueeDelete
                     else skipped++;
                 }
             }
-            if (building.SubNets != null)
+            if (building.PrefabSubNetCount > 0)
+            {
+                var bldTr = new Game.Objects.Transform { m_Position = building.Position, m_Rotation = building.Rotation };
+                EmitPrefabSubNets(
+                    em,
+                    ecb,
+                    building.Prefab,
+                    bldTr,
+                    bldOwnerDef,
+                    Entity.Null,
+                    building.Seed,
+                    building.PrefabSubNetCount,
+                    ref env,
+                    out int subRestored,
+                    out int subSkipped);
+                restored += subRestored;
+                skipped += subSkipped;
+                if (subRestored > 0) emittedSubNets = true;
+            }
+            else if (building.SubNets != null)
             {
                 for (int i = 0; i < building.SubNets.Count; i++)
                 {
@@ -3866,7 +4572,8 @@ namespace MarqueeDelete
                     if (!upg.IsPhysical) continue;
                     if (!EmitUpgradeWithOwnerDef(em, ecb, upg, building, bldOwnerDef))
                     {
-                        skipped += 1 + (upg.SubAreas != null ? upg.SubAreas.Count : 0) + (upg.SubNets != null ? upg.SubNets.Count : 0);
+                        skipped += 1 + (upg.SubAreas != null ? upg.SubAreas.Count : 0) +
+                                   (upg.PrefabSubNetCount > 0 ? upg.PrefabSubNetCount : (upg.SubNets != null ? upg.SubNets.Count : 0));
                         continue;
                     }
 
@@ -3880,7 +4587,26 @@ namespace MarqueeDelete
                             else skipped++;
                         }
                     }
-                    if (upg.SubNets != null)
+                    if (upg.PrefabSubNetCount > 0)
+                    {
+                        var upgTr = new Game.Objects.Transform { m_Position = upg.Position, m_Rotation = upg.Rotation };
+                        EmitPrefabSubNets(
+                            em,
+                            ecb,
+                            upg.Prefab,
+                            upgTr,
+                            upgOwnerDef,
+                            Entity.Null,
+                            upg.Seed,
+                            upg.PrefabSubNetCount,
+                            ref env,
+                            out int upgRestored,
+                            out int upgSkipped);
+                        restored += upgRestored;
+                        skipped += upgSkipped;
+                        if (upgRestored > 0) emittedSubNets = true;
+                    }
+                    else if (upg.SubNets != null)
                     {
                         for (int i = 0; i < upg.SubNets.Count; i++)
                         {

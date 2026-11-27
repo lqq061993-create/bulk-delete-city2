@@ -68,6 +68,7 @@ namespace MarqueeDelete
                 { m_Settings.GetOptionTabLocaleID(Settings.TabHotkeys), "Keybindings" },
 
                 { m_Settings.GetOptionGroupLocaleID(Settings.GroupBehavior), "Tool Behavior" },
+                { m_Settings.GetOptionGroupLocaleID(Settings.GroupGlobalUndo), "Global Construction Undo" },
                 { m_Settings.GetOptionGroupLocaleID(Settings.GroupCategories), "Target Categories" },
                 { m_Settings.GetOptionGroupLocaleID(Settings.GroupUndo), "Selective Undo Scope" },
                 { m_Settings.GetOptionGroupLocaleID(Settings.GroupSafety), "Safety & Protections" },
@@ -112,8 +113,26 @@ namespace MarqueeDelete
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.MaxPolygonVertices)), "Max Polygon Vertices" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.MaxPolygonVertices)), "Maximum allowed vertices for polygon selection (16 to 128, default 64)." },
 
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.EnableGlobalUndo)), "Enable Global Construction Undo" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.EnableGlobalUndo)), "Track construction actions (building, bulldozing, upgrading, zoning, terrain sculpting) in a unified undo stack with Ctrl+Z and a top-left HUD button. Automatically yields Ctrl+Z when Move It is active." },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.UndoTrackBuild)), "Track New Construction" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.UndoTrackBuild)), "Record newly placed roads, pipelines, power lines, buildings, trees, props, decals, and surfaces for global undo." },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.UndoTrackBulldoze)), "Track Single Bulldoze" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.UndoTrackBulldoze)), "Record entities demolished with the vanilla Bulldoze tool for global undo." },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.UndoTrackUpgrade)), "Track Upgrades & Replacements" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.UndoTrackUpgrade)), "Record road upgrades/replacements and building upgrades/extensions for global undo." },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.UndoTrackZone)), "Track Zoning" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.UndoTrackZone)), "Record zone painting, erasing, and overwriting strokes for global undo." },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.UndoTrackTerrain)), "Track Terrain Sculpting" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.UndoTrackTerrain)), "Record terrain heightmap brush strokes using 64x64 dirty tiles (capped at 32 MB total memory)." },
+
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.MaxUndoHistorySteps)), "Undo History Depth" },
-                { m_Settings.GetOptionDescLocaleID(nameof(Settings.MaxUndoHistorySteps)), "Number of deletion steps remembered for selective undo (1 to 10, default 5)." },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.MaxUndoHistorySteps)), "Number of construction and deletion steps remembered for undo (1 to 20, default 10)." },
 
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.MaxAssetOverlayBudget)), "Asset Overlay Primitive Budget" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.MaxAssetOverlayBudget)), "Maximum projected overlay primitives rendered simultaneously before distance decimation (400 to 5000, default 1600)." },
@@ -380,6 +399,7 @@ namespace MarqueeDelete
                 { "MarqueeDelete.HotkeyConfirm", "Confirm/Close" },
                 { "MarqueeDelete.HotkeySolo", "Solo Filter" },
                 { "MarqueeDelete.HotkeySwitchTool", "Switch Mode" },
+                { "MarqueeDelete.HotkeyToggleTool", "Toggle Bulk Delete" },
                 { "MarqueeDelete.HotkeyUnderground", "Underground" },
                 { "MarqueeDelete.HotkeyUndo", "Undo" },
                 { "MarqueeDelete.ImportantProtectedSummary", "Contains {0} important building(s) (extra confirmation required)" },
@@ -616,6 +636,39 @@ namespace MarqueeDelete
                 { "MarqueeDelete.CloseImpactReportBtn", "Close" },
                 { "MarqueeDelete.TabTargets", "Targets" },
                 { "MarqueeDelete.TabOptions", "Options" },
+
+                // Global Undo standalone HUD strings
+                { "MarqueeDelete.GlobalUndoTitle", "Global Undo" },
+                { "MarqueeDelete.GlobalUndoTopBtnTooltip", "Left-click: Open undo history panel • Right-click: Undo last action (Ctrl+Z)" },
+                { "MarqueeDelete.GlobalUndoEmpty", "No undo steps recorded yet." },
+                { "MarqueeDelete.GlobalUndoBtn", "Undo Last" },
+                { "MarqueeDelete.GlobalUndoClearBtn", "Clear" },
+                { "MarqueeDelete.GlobalUndoTrackingLabel", "Tracking" },
+                { "MarqueeDelete.GlobalUndoMasterToggle", "Global Undo" },
+                { "MarqueeDelete.GlobalUndoTrackBuild", "Build" },
+                { "MarqueeDelete.GlobalUndoTrackBulldoze", "Bulldoze" },
+                { "MarqueeDelete.GlobalUndoTrackUpgrade", "Upgrade" },
+                { "MarqueeDelete.GlobalUndoTrackZone", "Zone" },
+                { "MarqueeDelete.GlobalUndoTrackTerrain", "Terrain" },
+                { "MarqueeDelete.GlobalUndoYieldingBanner", "Ctrl+Z yielded to {0}" },
+                { "MarqueeDelete.GlobalUndoTerrainMemLabel", "Terrain cache" },
+                { "MarqueeDelete.GlobalUndoKindBulkDelete", "Bulk Delete" },
+                { "MarqueeDelete.GlobalUndoKindBulldoze", "Bulldoze" },
+                { "MarqueeDelete.GlobalUndoKindBuild", "Build" },
+                { "MarqueeDelete.GlobalUndoKindUpgrade", "Upgrade / Replace" },
+                { "MarqueeDelete.GlobalUndoKindZone", "Zoning" },
+                { "MarqueeDelete.GlobalUndoKindTerrain", "Terrain" },
+                { "MarqueeDelete.GlobalUndoKindMixed", "Mixed Action" },
+                { "MarqueeDelete.GlobalUndoItemsUnit", "items" },
+                { "MarqueeDelete.GlobalUndoZonesUnit", "blocks" },
+                { "MarqueeDelete.GlobalUndoTilesUnit", "tiles" },
+                { "MarqueeDelete.GlobalUndoTerrainEvictedTag", "Terrain trimmed" },
+                { "MarqueeDelete.GlobalUndoLatestTag", "Next" },
+                { "MarqueeDelete.GlobalUndoHotkeyHint", "RMB Quick Undo • Ctrl+Z" },
+                { "MarqueeDelete.GlobalUndoTimeJustNow", "Just now" },
+                { "MarqueeDelete.GlobalUndoTimeSeconds", "{0}s ago" },
+                { "MarqueeDelete.GlobalUndoTimeMinutes", "{0}m ago" },
+                { "MarqueeDelete.GlobalUndoTimeHours", "{0}h ago" },
             };
         }
 
@@ -645,6 +698,7 @@ namespace MarqueeDelete
                 { m_Settings.GetOptionTabLocaleID(Settings.TabHotkeys), "快捷键" },
 
                 { m_Settings.GetOptionGroupLocaleID(Settings.GroupBehavior), "工具行为" },
+                { m_Settings.GetOptionGroupLocaleID(Settings.GroupGlobalUndo), "全局建造撤回" },
                 { m_Settings.GetOptionGroupLocaleID(Settings.GroupCategories), "可删除目标类别" },
                 { m_Settings.GetOptionGroupLocaleID(Settings.GroupUndo), "可选撤回资产范围" },
                 { m_Settings.GetOptionGroupLocaleID(Settings.GroupSafety), "安全保护" },
@@ -689,8 +743,26 @@ namespace MarqueeDelete
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.MaxPolygonVertices)), "多边形顶点上限" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.MaxPolygonVertices)), "多边形框选允许绘制的最大顶点数（16至128，默认64）。" },
 
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.EnableGlobalUndo)), "启用全局建造撤回" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.EnableGlobalUndo)), "将新建、推土机单删、道路/建筑升级替换、分区涂刷与地形改造统一纳入撤回历史栈，支持 Ctrl+Z 与左上角常驻入口。检测到 Move It 等自带撤回工具激活时自动让出 Ctrl+Z。" },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.UndoTrackBuild)), "记录新建操作" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.UndoTrackBuild)), "记录新建的道路、管网、电力线、建筑、树木、摆件、贴花与地表区域。" },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.UndoTrackBulldoze)), "记录原版推土机单删" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.UndoTrackBulldoze)), "记录使用游戏原版推土机工具单个拆除的对象。" },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.UndoTrackUpgrade)), "记录升级与替换" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.UndoTrackUpgrade)), "记录道路升级/替换与建筑加装扩建操作。" },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.UndoTrackZone)), "记录分区涂刷" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.UndoTrackZone)), "记录原版分区画格、擦除与覆盖涂刷（同一次连续拖拽自动合并为 1 步）。" },
+
+                { m_Settings.GetOptionLabelLocaleID(nameof(Settings.UndoTrackTerrain)), "记录地形改造" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.UndoTrackTerrain)), "基于 64×64 脏瓦片增量记录地形笔刷改动（总内存配额上限 32 MB，超出自动淘汰最旧地形步）。" },
+
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.MaxUndoHistorySteps)), "撤销历史步数" },
-                { m_Settings.GetOptionDescLocaleID(nameof(Settings.MaxUndoHistorySteps)), "保留的批量删除撤销快照步数（1至10步，默认5步）。" },
+                { m_Settings.GetOptionDescLocaleID(nameof(Settings.MaxUndoHistorySteps)), "保留的建造与拆除撤销历史步数（1至20步，默认10步）。" },
 
                 { m_Settings.GetOptionLabelLocaleID(nameof(Settings.MaxAssetOverlayBudget)), "资产覆盖层图元预算" },
                 { m_Settings.GetOptionDescLocaleID(nameof(Settings.MaxAssetOverlayBudget)), "同时渲染的最大资产投影图元数量上限（400至5000，默认1600）。" },
@@ -957,6 +1029,7 @@ namespace MarqueeDelete
                 { "MarqueeDelete.HotkeyConfirm", "确认/关闭" },
                 { "MarqueeDelete.HotkeySolo", "单类筛选" },
                 { "MarqueeDelete.HotkeySwitchTool", "切换模式" },
+                { "MarqueeDelete.HotkeyToggleTool", "开关批量删除" },
                 { "MarqueeDelete.HotkeyUnderground", "地下视图" },
                 { "MarqueeDelete.HotkeyUndo", "撤回" },
                 { "MarqueeDelete.ImportantProtectedSummary", "含 {0} 个重要建筑（需额外确认）" },
@@ -1193,6 +1266,39 @@ namespace MarqueeDelete
                 { "MarqueeDelete.CloseImpactReportBtn", "关闭" },
                 { "MarqueeDelete.TabTargets", "目标" },
                 { "MarqueeDelete.TabOptions", "选项" },
+
+                // Global Undo standalone HUD strings
+                { "MarqueeDelete.GlobalUndoTitle", "全局撤回" },
+                { "MarqueeDelete.GlobalUndoTopBtnTooltip", "左键：展开撤回历史面板 • 右键：直接撤回上一步 (Ctrl+Z)" },
+                { "MarqueeDelete.GlobalUndoEmpty", "暂无可撤回的操作记录。" },
+                { "MarqueeDelete.GlobalUndoBtn", "撤回上一步" },
+                { "MarqueeDelete.GlobalUndoClearBtn", "清空" },
+                { "MarqueeDelete.GlobalUndoTrackingLabel", "记录范围" },
+                { "MarqueeDelete.GlobalUndoMasterToggle", "全局撤回" },
+                { "MarqueeDelete.GlobalUndoTrackBuild", "新建" },
+                { "MarqueeDelete.GlobalUndoTrackBulldoze", "单删" },
+                { "MarqueeDelete.GlobalUndoTrackUpgrade", "升级" },
+                { "MarqueeDelete.GlobalUndoTrackZone", "分区" },
+                { "MarqueeDelete.GlobalUndoTrackTerrain", "地形" },
+                { "MarqueeDelete.GlobalUndoYieldingBanner", "已向 {0} 自动让出 Ctrl+Z" },
+                { "MarqueeDelete.GlobalUndoTerrainMemLabel", "地形缓存" },
+                { "MarqueeDelete.GlobalUndoKindBulkDelete", "批量删除" },
+                { "MarqueeDelete.GlobalUndoKindBulldoze", "推土机拆除" },
+                { "MarqueeDelete.GlobalUndoKindBuild", "新建建造" },
+                { "MarqueeDelete.GlobalUndoKindUpgrade", "升级 / 替换" },
+                { "MarqueeDelete.GlobalUndoKindZone", "分区涂刷" },
+                { "MarqueeDelete.GlobalUndoKindTerrain", "地形改造" },
+                { "MarqueeDelete.GlobalUndoKindMixed", "复合操作" },
+                { "MarqueeDelete.GlobalUndoItemsUnit", "项" },
+                { "MarqueeDelete.GlobalUndoZonesUnit", "地块" },
+                { "MarqueeDelete.GlobalUndoTilesUnit", "瓦片" },
+                { "MarqueeDelete.GlobalUndoTerrainEvictedTag", "地形已裁剪" },
+                { "MarqueeDelete.GlobalUndoLatestTag", "下一步" },
+                { "MarqueeDelete.GlobalUndoHotkeyHint", "右键快速撤回 • Ctrl+Z" },
+                { "MarqueeDelete.GlobalUndoTimeJustNow", "刚刚" },
+                { "MarqueeDelete.GlobalUndoTimeSeconds", "{0}秒前" },
+                { "MarqueeDelete.GlobalUndoTimeMinutes", "{0}分钟前" },
+                { "MarqueeDelete.GlobalUndoTimeHours", "{0}小时前" },
             };
         }
 

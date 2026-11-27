@@ -2094,6 +2094,7 @@ namespace MarqueeDelete
         CloseColorModal = 2,
         CancelPointerOrDrag = 3,
         ClearSelection = 4,
+        CloseGlobalUndoPanel = 5,
     }
 
     /// <summary>
@@ -2920,7 +2921,7 @@ namespace MarqueeDelete
                 return true;
             }
 
-            if (PickSimilarArmed && input.AllowInput && !input.ColorModalOpen && !input.ImportantModalOpen)
+            if (PickSimilarArmed && input.AllowInput && !input.ColorModalOpen && !input.ImportantModalOpen && !input.GlobalUndoPanelOpen)
             {
                 if (input.EscapePressedThisFrame &&
                     (input.EscapeGate == null || input.EscapeGate.TryConsume(input.FrameCount)))
@@ -2946,6 +2947,7 @@ namespace MarqueeDelete
                 input.EscapePressedThisFrame,
                 input.ImportantModalOpen,
                 input.ColorModalOpen,
+                input.GlobalUndoPanelOpen,
                 hasActiveStrokeOrDrag,
                 PointerPressed,
                 hasPolygonDraft,
@@ -2958,6 +2960,9 @@ namespace MarqueeDelete
                 {
                     case EscapeAction.CloseColorModal:
                         res.Outcome = ToolStepOutcome.DeferredToUiColorModalEscape;
+                        break;
+                    case EscapeAction.CloseGlobalUndoPanel:
+                        res.Outcome = ToolStepOutcome.DeferredToUiGlobalUndoEscape;
                         break;
                     case EscapeAction.CloseImportantModal:
                         res.Outcome = ToolStepOutcome.CloseImportantModalWithSound;
@@ -3225,6 +3230,7 @@ namespace MarqueeDelete
         CompleteFreehandShape = 22,
         PickSimilarAtCursor = 23,
         CancelPickSimilarWithSound = 24,
+        DeferredToUiGlobalUndoEscape = 25,
     }
 
     public struct ToolStepInput
@@ -3236,6 +3242,7 @@ namespace MarqueeDelete
         public bool MouseOverUi;
         public bool ImportantModalOpen;
         public bool ColorModalOpen;
+        public bool GlobalUndoPanelOpen;
         public bool HasActiveUndo;
         public bool HasQueuedDeletion;
         public bool HasPending;
@@ -3512,6 +3519,27 @@ namespace MarqueeDelete
             bool hasPending,
             bool hasRetainedEdits)
         {
+            return ResolveEscapeAction(
+                importantModalOpen,
+                colorModalOpen,
+                globalUndoPanelOpen: false,
+                dragging: dragging,
+                pointerPressed: pointerPressed,
+                hasPolygonDraft: hasPolygonDraft,
+                hasPending: hasPending,
+                hasRetainedEdits: hasRetainedEdits);
+        }
+
+        public static EscapeAction ResolveEscapeAction(
+            bool importantModalOpen,
+            bool colorModalOpen,
+            bool globalUndoPanelOpen,
+            bool dragging,
+            bool pointerPressed,
+            bool hasPolygonDraft,
+            bool hasPending,
+            bool hasRetainedEdits)
+        {
             if (importantModalOpen)
             {
                 return EscapeAction.CloseImportantModal;
@@ -3520,6 +3548,11 @@ namespace MarqueeDelete
             if (colorModalOpen)
             {
                 return EscapeAction.CloseColorModal;
+            }
+
+            if (globalUndoPanelOpen)
+            {
+                return EscapeAction.CloseGlobalUndoPanel;
             }
 
             if (dragging || pointerPressed || hasPolygonDraft)
@@ -3537,8 +3570,8 @@ namespace MarqueeDelete
 
         /// <summary>
         /// Tool-side unified ESC dispatch. Skips if already consumed on this frame (e.g., by UIUpdate).
-        /// When CloseColorModal wins, intentionally defers consumption to the UI handler that
-        /// actually closes the modal while still blocking drag/selection cancellation for this frame.
+        /// When CloseColorModal or CloseGlobalUndoPanel wins, intentionally defers consumption to the UI handler that
+        /// actually closes the panel while still blocking drag/selection cancellation for this frame.
         /// </summary>
         public static EscapeAction TryConsumeToolEscape(
             EscapeFrameGate gate,
@@ -3559,8 +3592,9 @@ namespace MarqueeDelete
                 escapePressedThisFrame,
                 importantModalOpen,
                 colorModalOpen,
-                dragging,
-                pointerPressed,
+                globalUndoPanelOpen: false,
+                dragging: dragging,
+                pointerPressed: pointerPressed,
                 hasPolygonDraft: false,
                 hasPending: hasPending,
                 hasRetainedEdits: hasRetainedEdits);
@@ -3579,6 +3613,35 @@ namespace MarqueeDelete
             bool hasPending,
             bool hasRetainedEdits)
         {
+            return TryConsumeToolEscape(
+                gate,
+                frameCount,
+                allowInput,
+                escapePressedThisFrame,
+                importantModalOpen,
+                colorModalOpen,
+                globalUndoPanelOpen: false,
+                dragging: dragging,
+                pointerPressed: pointerPressed,
+                hasPolygonDraft: hasPolygonDraft,
+                hasPending: hasPending,
+                hasRetainedEdits: hasRetainedEdits);
+        }
+
+        public static EscapeAction TryConsumeToolEscape(
+            EscapeFrameGate gate,
+            int frameCount,
+            bool allowInput,
+            bool escapePressedThisFrame,
+            bool importantModalOpen,
+            bool colorModalOpen,
+            bool globalUndoPanelOpen,
+            bool dragging,
+            bool pointerPressed,
+            bool hasPolygonDraft,
+            bool hasPending,
+            bool hasRetainedEdits)
+        {
             if (!allowInput || !escapePressedThisFrame || (gate != null && gate.IsConsumedThisFrame(frameCount)))
             {
                 return EscapeAction.None;
@@ -3587,13 +3650,16 @@ namespace MarqueeDelete
             EscapeAction action = ResolveEscapeAction(
                 importantModalOpen,
                 colorModalOpen,
+                globalUndoPanelOpen,
                 dragging,
                 pointerPressed,
                 hasPolygonDraft,
                 hasPending,
                 hasRetainedEdits);
 
-            if (action == EscapeAction.None || action == EscapeAction.CloseColorModal)
+            if (action == EscapeAction.None ||
+                action == EscapeAction.CloseColorModal ||
+                action == EscapeAction.CloseGlobalUndoPanel)
             {
                 return action;
             }
@@ -3625,6 +3691,59 @@ namespace MarqueeDelete
                 importantModalOpen ||
                 !allowInput ||
                 !escapePressedThisFrame)
+            {
+                return false;
+            }
+
+            return gate == null || gate.TryConsume(frameCount);
+        }
+
+        /// <summary>
+        /// UI-side unified ESC dispatch for the standalone Global Undo popover. Works anytime UI allows it
+        /// (after higher-priority ImportantModal and ColorModal checks) and uses EscapeFrameGate to prevent
+        /// same-frame ESC bleed into ToolUpdate.
+        /// </summary>
+        public static bool TryConsumeUiGlobalUndoEscape(
+            EscapeFrameGate gate,
+            int frameCount,
+            bool globalUndoPanelOpen,
+            bool colorModalOpen,
+            bool importantModalOpen,
+            bool allowInput,
+            bool escapePressedThisFrame)
+        {
+            if (!globalUndoPanelOpen ||
+                colorModalOpen ||
+                importantModalOpen ||
+                !allowInput ||
+                !escapePressedThisFrame)
+            {
+                return false;
+            }
+
+            return gate == null || gate.TryConsume(frameCount);
+        }
+
+        /// <summary>
+        /// Validates a UI-triggered Global Undo panel state change (e.g. React keydown or close button).
+        /// Esc-triggered closes are rejected without consuming the gate when a higher-priority modal
+        /// is open or when the gate was already consumed on this frame.
+        /// </summary>
+        public static bool TryAcceptUiGlobalUndoClose(
+            EscapeFrameGate gate,
+            int frameCount,
+            bool wasOpen,
+            bool targetOpen,
+            bool colorModalOpen,
+            bool importantModalOpen,
+            bool escapePressedThisFrame)
+        {
+            if (targetOpen || !wasOpen || !escapePressedThisFrame)
+            {
+                return true;
+            }
+
+            if (colorModalOpen || importantModalOpen)
             {
                 return false;
             }

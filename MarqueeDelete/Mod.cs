@@ -11,7 +11,7 @@ namespace MarqueeDelete
     public sealed class Mod : IMod
     {
         public const string ModName = "MarqueeDelete";
-        public const string ModVersion = "2.7.1";
+        public const string ModVersion = "2.7.2";
         public const string TargetGameMvid = Compatibility.VerifiedGameMvid;
         public const string TargetGameVersion = Compatibility.VerifiedGameVersion;
         public static string DetectedGameMvid => Compatibility.DetectedMvid;
@@ -61,6 +61,8 @@ namespace MarqueeDelete
             {
                 updateSystem.UpdateAt<MarqueeDeleteToolSystem>(SystemUpdatePhase.ToolUpdate);
                 updateSystem.UpdateAt<MarqueeDeleteUndoSystem>(SystemUpdatePhase.ToolUpdate);
+                updateSystem.UpdateAt<GlobalUndoPreApplySystem>(SystemUpdatePhase.ApplyTool);
+                updateSystem.UpdateAt<GlobalUndoPostApplySystem>(SystemUpdatePhase.PostTool);
                 updateSystem.UpdateAt<MarqueeDeleteUISystem>(SystemUpdatePhase.UIUpdate);
             }
         }

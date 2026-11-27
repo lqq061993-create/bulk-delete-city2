@@ -4,6 +4,7 @@ import {
     extendMouseToolOptions,
     extendToolOptionsVisible,
 } from "mods/bulldoze-marquee-section";
+import { GlobalUndoOverlay, GlobalUndoTopButton } from "mods/global-undo-hud";
 import {
     initVanillaRefs,
     MOUSE_TOOL_OPTIONS_PATH,
@@ -13,11 +14,13 @@ import {
 
 const register: ModRegistrar = (moduleRegistry) => {
     const modules = moduleRegistry.registry;
+    initVanillaRefs(moduleRegistry);
+    preloadIcons(ALL_PRELOAD_ICONS);
+    moduleRegistry.append("GameTopLeft", GlobalUndoTopButton);
+    moduleRegistry.append("Game", GlobalUndoOverlay);
     if (!modules?.get(MOUSE_TOOL_OPTIONS_PATH)?.MouseToolOptions) {
         return;
     }
-    initVanillaRefs(moduleRegistry);
-    preloadIcons(ALL_PRELOAD_ICONS);
     moduleRegistry.extend(
         MOUSE_TOOL_OPTIONS_PATH,
         "MouseToolOptions",

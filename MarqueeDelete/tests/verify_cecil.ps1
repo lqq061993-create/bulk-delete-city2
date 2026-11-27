@@ -117,7 +117,7 @@ function Classify-AffectedFeature([string]$fullName) {
     if ($fullName -match 'Deleted|ModificationBarrier|ToolOutputBarrier|Batched|Signature|UniqueObject|UnderConstruction') {
         return 'DeletionSubmit'
     }
-    if ($fullName -match 'PrefabRef|EdgeGeometry|SubNet|SubObject|Composition|SelectiveUndo') {
+    if ($fullName -match 'PrefabRef|EdgeGeometry|SubNet|SubObject|SubReplacement|Composition|SelectiveUndo|ApplyObjectsSystem|ApplyNetSystem|ApplyAreasSystem|ApplyZonesSystem|ApplyBrushesSystem|Zones\.|Brush|GlobalUndo|Applied|BatchesUpdated') {
         return 'UndoRebuild'
     }
     if ($fullName -match 'UI|Binding|ProxyAction|LocalizationManager|DefaultToolSystem|Bulldoze') {

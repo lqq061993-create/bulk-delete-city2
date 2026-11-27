@@ -329,7 +329,12 @@ namespace MarqueeDelete
         private void AdvanceRoadFacilities()
         {
             var batch = m_FacilityBatch;
-            bool stopped = Keyboard.current?.escapeKey.wasPressedThisFrame == true || !CanSubmitDeletionNow;
+            int frameCount = UnityEngine.Time.frameCount;
+            bool escapeStopped = Keyboard.current?.escapeKey.wasPressedThisFrame == true &&
+                                 !GlobalUndoPanelOpen && !ColorModalOpen && !m_ImportantModalOpen &&
+                                 !m_EscapeGate.IsConsumedThisFrame(frameCount) &&
+                                 m_EscapeGate.TryConsume(frameCount);
+            bool stopped = escapeStopped || !CanSubmitDeletionNow;
             if (!stopped)
             {
                 var buffer = m_DeletionBarrier.CreateCommandBuffer();

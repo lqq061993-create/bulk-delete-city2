@@ -64,7 +64,11 @@ namespace Game.Vehicles { public struct Vehicle {} public struct OwnedVehicle { 
 namespace Game.Buildings { public struct Signature {} }
 namespace Game.Objects { public struct UniqueObject {} public struct UnderConstruction {} }
 namespace Game.Prefabs { public struct PrefabRef { public Entity m_Prefab; } }
-namespace Game.Net { public struct EdgeGeometry {} }
+namespace Game.Net { public struct EdgeGeometry {} public struct SubReplacement {} }
+namespace Game.Common { public struct BatchesUpdated {} }
+namespace Game.Tools { public class ApplyObjectsSystem {} public class ApplyNetSystem {} public class ApplyAreasSystem {} public class ApplyZonesSystem {} public class ApplyBrushesSystem {} public struct Brush {} public struct Temp {} }
+namespace Game.Zones { public struct Block {} public struct Cell {} }
+namespace Game.Simulation { public class TerrainSystem {} }
 
 class DeletionRegression
 {
@@ -1084,12 +1088,49 @@ class DeletionRegression
         string tickUndoBody = MethodBody(toolSource, "public void TickUndo(", 1600);
         Check(tickUndoBody.Contains("m_UndoRefreshDelayFrames") && tickUndoBody.Contains("FlushUndoConnectionRefresh("),
             "TickUndo drives post-restore connection refresh every frame even when MarqueeDelete tool is inactive");
+        string flushBody = MethodBody(toolSource, "private void FlushUndoConnectionRefresh(", 24000);
+        string markBldBody = MethodBody(toolSource, "private void MarkBuildingGraphUpdated(", 4500);
+        string refreshStreetsBody = MethodBody(toolSource, "private int MarkAdjacentStandaloneStreetsUpdated(", 12000);
+        Check(flushBody.Contains("MarkAdjacentStandaloneStreetsUpdated(") &&
+              !toolSource.Contains("AppendToBuffer<Game.Net.ConnectedNode>") &&
+              markBldBody.Contains("!IsOwnedInternalNet(subNet)") &&
+              refreshStreetsBody.Contains("UndoRefreshLogic.IsLocalConnectMatch("),
+            "FlushUndoConnectionRefresh marks adjacent external streets and LocalConnect SubNet nodes Updated without mutating ConnectedNode or internal SubNet edges");
         string preloadBody = MethodBody(toolSource, "protected override void OnGamePreload(", 1200);
         Check(preloadBody.Contains("m_UndoRefreshDelayFrames = 0;") && preloadBody.Contains("m_UndoRefreshBuildingPositions.Clear()"),
             "OnGamePreload clears pending post-restore connection refresh state across save loads");
         string logPathBody = MethodBody(toolSource, "private static string[] GetLogCandidatePaths(", 1200);
         Check(logPathBody.Contains("MarqueeDelete.status.log") && MethodBody(toolSource, "internal static void AppendStatusLine(", 2000).Contains("MaxStatusLogBytes"),
             "Status logging writes to Logs/MarqueeDelete.status.log with size rotation");
+
+        // --- Prefab-driven building SubNet rebuild guards ---
+        Check(!undoSource.Contains("CoursePosFlags.DisableMerge"),
+            "Owned building SubNets never set CoursePosFlags.DisableMerge");
+        string emitPrefabBody = MethodBody(undoSource, "private static void EmitPrefabSubNets(", 12000);
+        Check(emitPrefabBody.Contains("NetUtils.ShouldInvert(") &&
+              emitPrefabBody.Contains("NetUtils.FixInvertedUpgradeTrafficHandedness(") &&
+              emitPrefabBody.Contains("NetUtils.FlipUpgradeTrafficHandedness(") &&
+              emitPrefabBody.Contains("NetUtils.GetNodeRotation(") &&
+              emitPrefabBody.Contains("NetUtils.AdjustPosition(") &&
+              emitPrefabBody.Contains("WaterUtils.SampleHeight(") &&
+              emitPrefabBody.Contains("m_Elevation = float2.zero"),
+            "EmitPrefabSubNets matches vanilla ObjectToolBaseSystem UpdateSubNets + CreateSubNet + NetUtils.GetSubNet");
+        string fullStepBody = MethodBody(undoSource, "public bool Step(", 13000);
+        Check(fullStepBody.Contains("AddCPUHeightReader(default(JobHandle))") &&
+              fullStepBody.Contains("AddSurfaceReader(default(JobHandle))") &&
+              fullStepBody.Contains("UndoOperationKind.SubObjectUnit"),
+            "Step releases lazily acquired terrain/water readers in finally and handles atomic SubObjectUnit");
+        string undoSysBody = MethodBody(undoSource, "public sealed class MarqueeDeleteUndoSystem", 2500);
+        Check(undoSysBody.Contains("m_OrphanedCarrierQuery") &&
+              undoSysBody.Contains("m_PendingCarrierCleanupFrames") &&
+              undoSysBody.Contains("CreationFlags.Permanent"),
+            "MarqueeDeleteUndoSystem cleans up orphaned permanent CourseSplitSystem carriers");
+        string fullTickUndoBody = MethodBody(toolSource, "public void TickUndo(", 3000);
+        string globalUndoSource = ReadSource("GlobalUndo.cs");
+        Check(fullTickUndoBody.Contains("CityConfigurationSystem") &&
+              fullTickUndoBody.Contains("isLeftHandTraffic") &&
+              globalUndoSource.Contains("deletionUndo.Step(em, barrier.CreateCommandBuffer(), terrainSystem, waterSystem, isLeftHandTraffic, out bool delCompleted)"),
+            "Terrain, water, and LHT context is threaded from MarqueeDeleteToolSystem through GlobalUndo into DeletionUndo.Step");
 
         Console.WriteLine($"Deletion regression: {checks} passed (offline stand-ins; in-game playback still requires validation).");
     }

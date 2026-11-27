@@ -11,6 +11,21 @@ using System.Collections.Generic;
 namespace Unity.Collections
 {
     public enum Allocator { Invalid = 0, None = 1, Temp = 2, TempJob = 3, Persistent = 4 }
+
+    public struct NativeArray<T> : IDisposable where T : struct
+    {
+        private readonly T[] m_Items;
+        public NativeArray(List<T> items) { m_Items = items != null ? items.ToArray() : Array.Empty<T>(); }
+        public NativeArray(T[] items) { m_Items = items ?? Array.Empty<T>(); }
+        public int Length => m_Items != null ? m_Items.Length : 0;
+        public T this[int i]
+        {
+            get => m_Items[i];
+            set => m_Items[i] = value;
+        }
+        public IEnumerator<T> GetEnumerator() => ((IEnumerable<T>)(m_Items ?? Array.Empty<T>())).GetEnumerator();
+        public void Dispose() { }
+    }
 }
 
 namespace Unity.Entities
@@ -31,11 +46,20 @@ namespace Unity.Entities
     public interface IBufferElementData { }
     public interface ISharedComponentData { }
 
+    [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
+    public sealed class UpdateBeforeAttribute : Attribute
+    {
+        public Type SystemType { get; }
+        public UpdateBeforeAttribute(Type systemType) { SystemType = systemType; }
+    }
+
     public struct ComponentType
     {
         public Type Type;
+        public bool IsExclude;
         public static ComponentType ReadOnly<T>() => new ComponentType { Type = typeof(T) };
         public static ComponentType ReadWrite<T>() => new ComponentType { Type = typeof(T) };
+        public static ComponentType Exclude<T>() => new ComponentType { Type = typeof(T), IsExclude = true };
     }
 
     public sealed class DynamicBuffer<T> : List<T> where T : struct, IBufferElementData
@@ -43,22 +67,27 @@ namespace Unity.Entities
         public int Length => Count;
     }
 
-    public sealed class EntityArray : IDisposable
+    public sealed class EntityQueryDesc
     {
-        private readonly List<Entity> m_Items;
-        public EntityArray(List<Entity> items) { m_Items = items; }
-        public int Length => m_Items.Count;
-        public Entity this[int i] => m_Items[i];
-        public List<Entity>.Enumerator GetEnumerator() => m_Items.GetEnumerator();
-        public void Dispose() { }
+        public ComponentType[] All;
+        public ComponentType[] None;
+        public ComponentType[] Any;
     }
 
     public sealed class EntityQuery : IDisposable
     {
         private readonly EntityManager m_Manager;
         private readonly Type[] m_Required;
-        public EntityQuery(EntityManager manager, Type[] required) { m_Manager = manager; m_Required = required; }
-        public EntityArray ToEntityArray(Unity.Collections.Allocator allocator) => new EntityArray(m_Manager.Matching(m_Required));
+        private readonly Type[] m_Excluded;
+        public EntityQuery(EntityManager manager, Type[] required, Type[] excluded = null)
+        {
+            m_Manager = manager;
+            m_Required = required;
+            m_Excluded = excluded;
+        }
+        public bool IsEmptyIgnoreFilter => m_Manager.Matching(m_Required, m_Excluded).Count == 0;
+        public Unity.Collections.NativeArray<Entity> ToEntityArray(Unity.Collections.Allocator allocator) =>
+            new Unity.Collections.NativeArray<Entity>(m_Manager.Matching(m_Required, m_Excluded));
         public void Dispose() { }
     }
 
@@ -129,20 +158,41 @@ namespace Unity.Entities
         }
         public EntityQuery CreateEntityQuery(params ComponentType[] types)
         {
-            var required = new Type[types.Length];
-            for (int i = 0; i < types.Length; i++) required[i] = types[i].Type;
-            return new EntityQuery(this, required);
+            var required = new List<Type>();
+            var excluded = new List<Type>();
+            for (int i = 0; i < types.Length; i++)
+            {
+                if (types[i].IsExclude) excluded.Add(types[i].Type);
+                else required.Add(types[i].Type);
+            }
+            return new EntityQuery(this, required.ToArray(), excluded.Count > 0 ? excluded.ToArray() : null);
         }
-        internal List<Entity> Matching(Type[] required)
+        public EntityQuery CreateEntityQuery(EntityQueryDesc desc)
+        {
+            var required = desc?.All != null ? Array.ConvertAll(desc.All, c => c.Type) : Array.Empty<Type>();
+            var excluded = desc?.None != null ? Array.ConvertAll(desc.None, c => c.Type) : Array.Empty<Type>();
+            return new EntityQuery(this, required, excluded);
+        }
+        internal List<Entity> Matching(Type[] required, Type[] excluded = null)
         {
             var hits = new List<Entity>();
             foreach (Entity e in m_Order)
             {
                 if (!m_Data.TryGetValue(e, out Dictionary<Type, object> components)) continue;
                 bool ok = true;
-                foreach (Type t in required)
+                if (required != null)
                 {
-                    if (!components.ContainsKey(t)) { ok = false; break; }
+                    foreach (Type t in required)
+                    {
+                        if (!components.ContainsKey(t)) { ok = false; break; }
+                    }
+                }
+                if (ok && excluded != null)
+                {
+                    foreach (Type t in excluded)
+                    {
+                        if (components.ContainsKey(t)) { ok = false; break; }
+                    }
                 }
                 if (ok) hits.Add(e);
             }
@@ -192,6 +242,9 @@ namespace Unity.Entities
         public void AddComponent<T>(Entity e, T value) where T : struct, IComponentData =>
             Commands.Add(new Command { Kind = Kind.AddComponent, Entity = e, Type = typeof(T), Value = value });
 
+        public void SetComponent<T>(Entity e, T value) where T : struct, IComponentData =>
+            Commands.Add(new Command { Kind = Kind.AddComponent, Entity = e, Type = typeof(T), Value = value });
+
         // The game returns the deferred buffer so callers can fill it; replay uses the same
         // instance, which is why the command holds a reference rather than a copy.
         public DynamicBuffer<T> AddBuffer<T>(Entity e) where T : struct, IBufferElementData
@@ -201,9 +254,17 @@ namespace Unity.Entities
             return buffer;
         }
 
-        public void RemoveComponent<T>(Entity e) where T : struct, IComponentData =>
+        public DynamicBuffer<T> SetBuffer<T>(Entity e) where T : struct, IBufferElementData => AddBuffer<T>(e);
+
+        public void RemoveComponent<T>(Entity e) =>
             Commands.Add(new Command { Kind = Kind.RemoveComponent, Entity = e, Type = typeof(T) });
     }
+}
+
+namespace UnityEngine.Experimental.Rendering
+{
+    public enum GraphicsFormat { None = 0, R16_UNorm = 1 }
+    [Flags] public enum TextureCreationFlags { None = 0 }
 }
 
 namespace UnityEngine
@@ -213,17 +274,58 @@ namespace UnityEngine
         public static int frameCount = 1;
         public static float unscaledDeltaTime = 0.016f;
     }
+
+    public class Object
+    {
+        public static void Destroy(Object obj) { }
+    }
+
+    public class Texture : Object
+    {
+        public int width;
+        public int height;
+    }
+
+    public sealed class Texture2D : Texture
+    {
+        public Texture2D(int w, int h, UnityEngine.Experimental.Rendering.GraphicsFormat fmt, UnityEngine.Experimental.Rendering.TextureCreationFlags flags)
+        {
+            width = w;
+            height = h;
+        }
+        public void SetPixelData<T>(T[] data, int mipLevel, int sourceDataStartIndex = 0) { }
+        public void Apply(bool updateMipmaps = true, bool makeNoLongerReadable = false) { }
+    }
+
+    public static class Graphics
+    {
+        public static void CopyTexture(Texture src, int srcElement, int srcMip, int srcX, int srcY, int srcWidth, int srcHeight, Texture dst, int dstElement, int dstMip, int dstX, int dstY) { }
+    }
 }
 
 namespace Game
 {
+    [Flags]
+    public enum GameMode
+    {
+        None = 0,
+        Game = 1,
+        Editor = 2,
+        GameOrEditor = Game | Editor,
+    }
+
     public abstract class GameSystemBase
     {
         public Unity.Entities.World World { get; } = new Unity.Entities.World();
-        protected Unity.Entities.JobHandle Dependency { get; set; }
+        public Unity.Entities.EntityManager EntityManager { get; set; } = new Unity.Entities.EntityManager();
+        protected Unity.Jobs.JobHandle Dependency { get; set; }
+        protected Unity.Entities.EntityQuery GetEntityQuery(params Unity.Entities.ComponentType[] types) => EntityManager.CreateEntityQuery(types);
+        protected Unity.Entities.EntityQuery GetEntityQuery(Unity.Entities.EntityQueryDesc desc) => EntityManager.CreateEntityQuery(desc);
         protected virtual void OnCreate() { }
         protected virtual void OnUpdate() { }
         protected virtual void OnDestroy() { }
+        public void CreateForTest() => OnCreate();
+        public void UpdateForTest() => OnUpdate();
     }
 }
 
@@ -231,16 +333,37 @@ namespace Unity.Entities
 {
     public sealed class World
     {
-        public T GetOrCreateSystemManaged<T>() where T : new() => new T();
-        public T GetExistingSystemManaged<T>() where T : class => null;
+        private readonly Dictionary<Type, object> m_Systems = new Dictionary<Type, object>();
+        public T GetOrCreateSystemManaged<T>() where T : new()
+        {
+            if (m_Systems.TryGetValue(typeof(T), out object existing)) return (T)existing;
+            var created = new T();
+            m_Systems[typeof(T)] = created;
+            return created;
+        }
+        public T GetExistingSystemManaged<T>() where T : class =>
+            m_Systems.TryGetValue(typeof(T), out object existing) ? existing as T : null;
     }
 }
 
 namespace MarqueeDelete
 {
-    internal sealed class Settings { public int MaxUndoHistorySteps = 20; }
+    internal sealed class Settings
+    {
+        public int MaxUndoHistorySteps = 20;
+        public bool EnableGlobalUndo = true;
+        public bool UndoTrackBuild = true;
+        public bool UndoTrackBulldoze = true;
+        public bool UndoTrackUpgrade = true;
+        public bool UndoTrackZone = true;
+        public bool UndoTrackTerrain = true;
+    }
 
-    internal static class Mod { public static Settings Settings; }
+    internal static class Mod
+    {
+        public static Settings Settings;
+        public static bool RuntimeActive = true;
+    }
 
     internal sealed class MarqueeDeleteToolSystem
     {
@@ -250,6 +373,15 @@ namespace MarqueeDelete
         public static CompatibilityTier TierFor(CompatibilityGroup group) => CompatibilityTier.Verified;
         public static void AppendStatusLine(string line) { StatusLines.Add(line); }
         public static readonly System.Collections.Generic.List<string> StatusLines = new System.Collections.Generic.List<string>();
-        public void TickUndo(Game.Tools.ToolOutputBarrier barrier) { }
+        public bool HasActiveUndo { get; set; }
+        public Action<Game.Tools.ToolOutputBarrier> OnTickUndo;
+        public void TickUndo(Game.Tools.ToolOutputBarrier barrier) { OnTickUndo?.Invoke(barrier); }
+        public void OnGlobalUndoPreApply(
+            Game.Tools.ToolSystem toolSystem,
+            Game.Simulation.TerrainSystem terrainSystem,
+            Unity.Entities.EntityQuery tempQuery,
+            Unity.Entities.EntityQuery zoneTempQuery,
+            Unity.Entities.EntityQuery brushTempQuery) { }
+        public void OnGlobalUndoPostApply(Unity.Entities.EntityQuery createdQuery) { }
     }
 }

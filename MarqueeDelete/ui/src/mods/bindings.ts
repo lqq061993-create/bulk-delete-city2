@@ -133,6 +133,20 @@ export const undoFinishedSkippedCount$ = bindValue<number>(GROUP, "undoFinishedS
 export const undoFinishedTotalCount$ = bindValue<number>(GROUP, "undoFinishedTotalCount", 0);
 export const undoFinishedNotCapturedCount$ = bindValue<number>(GROUP, "undoFinishedNotCapturedCount", 0);
 export const undoCaptureFailedCount$ = bindValue<number>(GROUP, "undoCaptureFailedCount", 0);
+export const globalUndoEnabled$ = bindValue<boolean>(GROUP, "globalUndoEnabled", true);
+export const globalUndoTrackBuild$ = bindValue<boolean>(GROUP, "globalUndoTrackBuild", true);
+export const globalUndoTrackBulldoze$ = bindValue<boolean>(GROUP, "globalUndoTrackBulldoze", true);
+export const globalUndoTrackUpgrade$ = bindValue<boolean>(GROUP, "globalUndoTrackUpgrade", true);
+export const globalUndoTrackZone$ = bindValue<boolean>(GROUP, "globalUndoTrackZone", true);
+export const globalUndoTrackTerrain$ = bindValue<boolean>(GROUP, "globalUndoTrackTerrain", true);
+export const globalUndoYielding$ = bindValue<boolean>(GROUP, "globalUndoYielding", false);
+export const globalUndoYieldingTool$ = bindValue<string>(GROUP, "globalUndoYieldingTool", "");
+export const globalUndoActiveKind$ = bindValue<string>(GROUP, "globalUndoActiveKind", "none");
+export const globalUndoTopKind$ = bindValue<string>(GROUP, "globalUndoTopKind", "none");
+export const globalUndoTopCount$ = bindValue<number>(GROUP, "globalUndoTopCount", 0);
+export const globalUndoTerrainMemKB$ = bindValue<number>(GROUP, "globalUndoTerrainMemKB", 0);
+export const globalUndoHistoryJson$ = bindValue<string>(GROUP, "globalUndoHistoryJson", "[]");
+export const globalUndoPanelOpen$ = bindValue<boolean>(GROUP, "globalUndoPanelOpen", false);
 export const colorModalOpen$ = bindValue<boolean>(GROUP, "colorModalOpen", false);
 export const colorPaletteJson$ = bindValue<string>(GROUP, "colorPaletteJson", "");
 
@@ -252,6 +266,18 @@ export function dismissUndoNotice(): void {
     trigger(GROUP, "dismissUndoNotice");
 }
 
+export function clearGlobalUndoHistory(): void {
+    trigger(GROUP, "clearGlobalUndoHistory");
+}
+
+export function toggleGlobalUndoPanel(): void {
+    trigger(GROUP, "toggleGlobalUndoPanel");
+}
+
+export function setGlobalUndoPanelOpen(open: boolean): void {
+    trigger(GROUP, "setGlobalUndoPanelOpen", open);
+}
+
 export function setColorModalOpen(open: boolean): void {
     trigger(GROUP, "setColorModalOpen", open);
 }
@@ -286,6 +312,52 @@ export function useColorPalette(): ColorPaletteData {
 
 export function useColorModalOpen(): boolean {
     return useValue(colorModalOpen$);
+}
+
+export interface GlobalUndoHistoryEntry {
+    id: number;
+    kind: string;
+    tool: string;
+    count: number;
+    created: number;
+    deleted: number;
+    inPlace: number;
+    zones: number;
+    tiles: number;
+    terrainEvicted: boolean;
+    ts: number;
+}
+
+export function useGlobalUndoState() {
+    const historyJson = useValue(globalUndoHistoryJson$);
+    const history = useMemo<GlobalUndoHistoryEntry[]>(() => {
+        if (!historyJson || historyJson === "[]") {
+            return [];
+        }
+        try {
+            const parsed = JSON.parse(historyJson);
+            return Array.isArray(parsed) ? (parsed as GlobalUndoHistoryEntry[]) : [];
+        } catch {
+            return [];
+        }
+    }, [historyJson]);
+
+    return {
+        enabled: useValue(globalUndoEnabled$),
+        trackBuild: useValue(globalUndoTrackBuild$),
+        trackBulldoze: useValue(globalUndoTrackBulldoze$),
+        trackUpgrade: useValue(globalUndoTrackUpgrade$),
+        trackZone: useValue(globalUndoTrackZone$),
+        trackTerrain: useValue(globalUndoTrackTerrain$),
+        yielding: useValue(globalUndoYielding$),
+        yieldingTool: useValue(globalUndoYieldingTool$),
+        activeKind: useValue(globalUndoActiveKind$),
+        topKind: useValue(globalUndoTopKind$),
+        topCount: useValue(globalUndoTopCount$),
+        terrainMemKB: useValue(globalUndoTerrainMemKB$),
+        panelOpen: useValue(globalUndoPanelOpen$),
+        history,
+    };
 }
 
 export function useUndoState() {

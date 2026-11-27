@@ -114,7 +114,7 @@ Bulk Delete replaces slow, single-click bulldozing with fast, precise area clear
 	<Screenshot Value="Properties/Screenshots/concept_colors.png" />
 	<Screenshot Value="Properties/Screenshots/03-selective-undo.jpg" />
 	<Tag Value="Code Mod" />
-  <ModVersion Value="2.7.1" />
+  <ModVersion Value="2.7.2" />
 	<GameVersion Value="1.6*" />
-	<ChangeLog>修复一些bug</ChangeLog>
+	<ChangeLog>独立撤回功能，支持建筑道路分区等撤回上一步</ChangeLog>
 </Publish>

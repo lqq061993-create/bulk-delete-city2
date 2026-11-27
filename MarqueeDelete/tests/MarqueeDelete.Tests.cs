@@ -74,6 +74,12 @@ namespace MarqueeDelete.Tests
             TestBatch6aPresetsNetSubfiltersAndMatchSimilar();
             TestRoadFacilitySelection();
             TestBatch7PureLogicHistoryImpactSoloAndGates();
+            TestGlobalUndoPolicyAndCoalescing();
+            TestGlobalUndoTerrainTilesAndEviction();
+            TestGlobalUndoZoneValidationAndSettings();
+            TestGlobalUndoEscapeIsolationAndPriority();
+            TestGlobalUndoRoadBuildClassificationAndSplitChain();
+            TestPrefabDrivenSubNetAndCarrierCleanupSourceGuards();
 
             Console.WriteLine($"Unit tests finished: passed={s_Passed}, failed={s_Failed}");
             return s_Failed == 0 ? 0 : 1;
@@ -3182,9 +3188,30 @@ namespace MarqueeDelete.Tests
 
             string tsxSrc = System.IO.File.ReadAllText(tsxPath);
             AssertTrue(!tsxSrc.Contains("coui://uil", StringComparison.OrdinalIgnoreCase), "UiIcons.NoCouiUilInTsx");
+            AssertTrue(tsxSrc.Contains("GEMINI_UNDO_ICON", StringComparison.Ordinal), "UiIcons.PreloadsGeminiUndoIcon");
+            AssertTrue(tsxSrc.Contains("MarqueeDelete.HotkeyToggleTool", StringComparison.Ordinal), "Hotkeys.DetailsUsesHotkeyToggleTool");
+            AssertTrue(!tsxSrc.Contains("Shift+U", StringComparison.Ordinal), "Hotkeys.DetailsRemovesFakeShiftU");
             AssertTrue(System.IO.File.Exists(System.IO.Path.Combine(rootDir, "ui", "src", "mods", "confirm-icon.svg")), "UiIcons.ConfirmSvgExists");
             AssertTrue(System.IO.File.Exists(System.IO.Path.Combine(rootDir, "ui", "src", "mods", "lock-icon.svg")), "UiIcons.LockSvgExists");
             AssertTrue(System.IO.File.Exists(System.IO.Path.Combine(rootDir, "ui", "src", "mods", "star-all-icon.svg")), "UiIcons.StarAllSvgExists");
+            string svgPath = System.IO.Path.Combine(rootDir, "ui", "src", "mods", "gemini-undo-icon.svg");
+            AssertTrue(System.IO.File.Exists(svgPath), "UiIcons.GeminiUndoSvgExists");
+            string svgSrc = System.IO.File.ReadAllText(svgPath);
+            AssertTrue(svgSrc.Contains("viewBox=\"0 0 32 32\"", StringComparison.Ordinal), "UiIcons.GeminiUndoViewBox32");
+            AssertTrue(svgSrc.Contains("#ffffff", StringComparison.OrdinalIgnoreCase), "UiIcons.GeminiUndoWhiteFill");
+
+            string globalHudTsx = System.IO.File.ReadAllText(System.IO.Path.Combine(rootDir, "ui", "src", "mods", "global-undo-hud.tsx"));
+            AssertTrue(globalHudTsx.Contains("variant=\"floating\"", StringComparison.Ordinal), "GlobalUndoHud.UsesFloatingButton");
+            AssertTrue(globalHudTsx.Contains("src={GEMINI_UNDO_ICON}", StringComparison.Ordinal), "GlobalUndoHud.UsesGeminiUndoIcon");
+            AssertTrue(globalHudTsx.Contains("src={UNDO_ICON}", StringComparison.Ordinal), "GlobalUndoHud.KeepsUndoIconOnActions");
+
+            string globalHudScss = System.IO.File.ReadAllText(System.IO.Path.Combine(rootDir, "ui", "src", "mods", "global-undo-hud.module.scss"));
+            AssertTrue(!globalHudScss.Contains("var(--floatingToggleSize", StringComparison.Ordinal), "GlobalUndoScss.NoFloatingToggleSizeOverride");
+            AssertTrue(!System.Text.RegularExpressions.Regex.IsMatch(globalHudScss, @"^\s*(gap|row-gap|column-gap)\s*:", System.Text.RegularExpressions.RegexOptions.Multiline), "GlobalUndoScss.NoCssGap");
+            AssertTrue(!System.Text.RegularExpressions.Regex.IsMatch(globalHudScss, @"^\s*border(-(top|right|bottom|left))?\s*:", System.Text.RegularExpressions.RegexOptions.Multiline), "GlobalUndoScss.NoBorderShorthand");
+
+            AssertLocaleEntryValid(enDict, "EN", "\"MarqueeDelete.HotkeyToggleTool\"", "HotkeyToggleTool");
+            AssertLocaleEntryValid(zhDict, "ZH", "\"MarqueeDelete.HotkeyToggleTool\"", "HotkeyToggleTool");
 
             string[] netSubProps = { "DeleteNetRoads", "DeleteNetTracks", "DeleteNetPipelines", "DeleteNetPowerLines", "DeleteNetOther" };
             foreach (string prop in netSubProps)
@@ -3580,6 +3607,858 @@ namespace MarqueeDelete.Tests
             AssertTrue(UndoRefreshLogic.IsBuildingAdjacentToRoad(centerDistXZ: 60f, boundsDistXZ: 28f, hasNoRoadEdge: true), "UndoRefresh.DisconnectedBuildingExtendedMarginMatches");
             AssertTrue(!UndoRefreshLogic.IsBuildingAdjacentToRoad(centerDistXZ: 60f, boundsDistXZ: 28f, hasNoRoadEdge: false), "UndoRefresh.ConnectedDistantBuildingSkipped");
             AssertTrue(!UndoRefreshLogic.IsBuildingAdjacentToRoad(centerDistXZ: 80f, boundsDistXZ: 45f, hasNoRoadEdge: true), "UndoRefresh.FarDisconnectedBuildingSkipped");
+
+            // 8. LocalConnect reconciliation math (CreationFlags.Permanent building SubNets <-> permanent streets)
+            float pedRadius = UndoRefreshLogic.ComputeLocalConnectRadius(nodeDefaultWidth: 2f, searchDistance: 1f);
+            AssertTrue(Math.Abs(pedRadius - 2f) < 0.001f, "UndoRefresh.LocalConnectRadius");
+            AssertTrue(Math.Abs(UndoRefreshLogic.ComputeLocalConnectRadius(nodeDefaultWidth: 0f, searchDistance: -3f)) < 0.001f, "UndoRefresh.LocalConnectRadiusClampedNonNegative");
+
+            // Park SubNet footpath dead-end (!nodeIsStandalone, Pathway=2 connecting to Road|Pathway=3)
+            // connects across zoning setback to standalone zoneable street (Road=1 connecting Road|Pathway=3)
+            AssertTrue(UndoRefreshLogic.IsLocalConnectMatch(
+                nodeConnectLayers: 2, nodeLocalConnectLayers: 3,
+                edgeConnectLayers: 1, edgeLocalConnectLayers: 3,
+                rawDistanceXZ: 13.5f, edgeDefaultWidth: 8f, minRoundaboutDistanceXZ: float.MaxValue,
+                nodeIsStandalone: false, edgeIsStandalone: true, edgeIsZoneable: true,
+                nodeRadius: pedRadius, diffY: 0.25f, heightMin: -2f, heightMax: 2f),
+                "UndoRefresh.OwnedSubNetConnectsToZoneableStreetAcrossSetback");
+
+            // Too far even with the 8m zoning setback bonus
+            AssertTrue(!UndoRefreshLogic.IsLocalConnectMatch(
+                nodeConnectLayers: 2, nodeLocalConnectLayers: 3,
+                edgeConnectLayers: 1, edgeLocalConnectLayers: 3,
+                rawDistanceXZ: 14.5f, edgeDefaultWidth: 8f, minRoundaboutDistanceXZ: float.MaxValue,
+                nodeIsStandalone: false, edgeIsStandalone: true, edgeIsZoneable: true,
+                nodeRadius: pedRadius, diffY: 0.25f, heightMin: -2f, heightMax: 2f),
+                "UndoRefresh.OwnedSubNetBeyondSetbackRejected");
+
+            // Asymmetric layer mismatch rejected (must cross-match nodeLocal&edgeConn AND nodeConn&edgeLocal)
+            AssertTrue(!UndoRefreshLogic.IsLocalConnectMatch(
+                nodeConnectLayers: 1, nodeLocalConnectLayers: 2,
+                edgeConnectLayers: 1, edgeLocalConnectLayers: 2,
+                rawDistanceXZ: 5f, edgeDefaultWidth: 8f, minRoundaboutDistanceXZ: float.MaxValue,
+                nodeIsStandalone: false, edgeIsStandalone: true, edgeIsZoneable: true,
+                nodeRadius: pedRadius, diffY: 0f, heightMin: -2f, heightMax: 2f),
+                "UndoRefresh.LocalConnectCrossLayerMismatchRejected");
+
+            // Internal owned SubNet edges do not receive the 8m zoning bonus
+            AssertTrue(!UndoRefreshLogic.IsLocalConnectMatch(
+                nodeConnectLayers: 2, nodeLocalConnectLayers: 2,
+                edgeConnectLayers: 3, edgeLocalConnectLayers: 3,
+                rawDistanceXZ: 7.5f, edgeDefaultWidth: 2f, minRoundaboutDistanceXZ: float.MaxValue,
+                nodeIsStandalone: false, edgeIsStandalone: false, edgeIsZoneable: false,
+                nodeRadius: pedRadius, diffY: 0f, heightMin: -2f, heightMax: 2f),
+                "UndoRefresh.OwnedInternalEdgeNoSetbackBonus");
+
+            // Vertical height outside m_HeightRange is rejected
+            AssertTrue(!UndoRefreshLogic.IsLocalConnectMatch(
+                nodeConnectLayers: 2, nodeLocalConnectLayers: 2,
+                edgeConnectLayers: 3, edgeLocalConnectLayers: 3,
+                rawDistanceXZ: 5f, edgeDefaultWidth: 8f, minRoundaboutDistanceXZ: float.MaxValue,
+                nodeIsStandalone: false, edgeIsStandalone: true, edgeIsZoneable: true,
+                nodeRadius: pedRadius, diffY: 5f, heightMin: -2f, heightMax: 2f),
+                "UndoRefresh.LocalConnectHeightMismatchRejected");
+
+            // Layer mismatch is rejected
+            AssertTrue(!UndoRefreshLogic.IsLocalConnectMatch(
+                nodeConnectLayers: 1, nodeLocalConnectLayers: 1,
+                edgeConnectLayers: 2, edgeLocalConnectLayers: 2,
+                rawDistanceXZ: 5f, edgeDefaultWidth: 8f, minRoundaboutDistanceXZ: float.MaxValue,
+                nodeIsStandalone: false, edgeIsStandalone: true, edgeIsZoneable: true,
+                nodeRadius: pedRadius, diffY: 0f, heightMin: -2f, heightMax: 2f),
+                "UndoRefresh.LocalConnectLayerMismatchRejected");
+
+            // Roundabout endpoint distance allows connection when closer than edge center curve
+            AssertTrue(UndoRefreshLogic.IsLocalConnectMatch(
+                nodeConnectLayers: 2, nodeLocalConnectLayers: 2,
+                edgeConnectLayers: 2, edgeLocalConnectLayers: 2,
+                rawDistanceXZ: 15f, edgeDefaultWidth: 4f, minRoundaboutDistanceXZ: 1.5f,
+                nodeIsStandalone: true, edgeIsStandalone: true, edgeIsZoneable: false,
+                nodeRadius: pedRadius, diffY: 0f, heightMin: -2f, heightMax: 2f),
+                "UndoRefresh.LocalConnectRoundaboutEndpointMatches");
+        }
+
+        private sealed class FakeGlobalUndoItem : IGlobalUndoHistoryItem
+        {
+            public string Tag;
+            public long TerrainBytes { get; set; }
+            public bool HasNonTerrainPayload { get; set; }
+            public bool TerrainEvicted { get; private set; }
+
+            public void EvictTerrain()
+            {
+                TerrainBytes = 0;
+                TerrainEvicted = true;
+            }
+        }
+
+        private static void TestGlobalUndoPolicyAndCoalescing()
+        {
+            // 1. Move It / external undo tool detection & Ctrl+Z yielding
+            AssertTrue(GlobalUndoPolicy.IsExternalUndoTool("Move It", "Game.Tools.ToolBaseSystem"), "GlobalUndo.MoveItIdDetected");
+            AssertTrue(GlobalUndoPolicy.IsExternalUndoTool("MoveIt", ""), "GlobalUndo.MoveItCompactDetected");
+            AssertTrue(GlobalUndoPolicy.IsExternalUndoTool("", "MoveIt.Tool.MIT_ToolSystem"), "GlobalUndo.MoveItTypeDetected");
+            AssertTrue(GlobalUndoPolicy.ShouldYieldCtrlZ("MIT_Tool", ""), "GlobalUndo.MoveItYieldsCtrlZ");
+            AssertTrue(!GlobalUndoPolicy.IsExternalUndoTool("Net Tool", "Game.Tools.NetToolSystem"), "GlobalUndo.VanillaNetNotExternal");
+            AssertTrue(!GlobalUndoPolicy.IsExternalUndoTool("Marquee Delete", "MarqueeDelete.MarqueeDeleteToolSystem"), "GlobalUndo.OwnToolNotExternal");
+
+            // 2. Capture eligibility
+            GlobalUndoTrackOptions allOn = GlobalUndoTrackOptions.AllEnabled;
+            AssertTrue(GlobalUndoPolicy.ShouldCaptureForTool(in allOn, "Net Tool", "Game.Tools.NetToolSystem", isReplayingUndo: false), "GlobalUndo.CaptureVanillaNet");
+            AssertTrue(!GlobalUndoPolicy.ShouldCaptureForTool(in allOn, "Net Tool", "Game.Tools.NetToolSystem", isReplayingUndo: true), "GlobalUndo.SkipWhileReplaying");
+            AssertTrue(!GlobalUndoPolicy.ShouldCaptureForTool(in allOn, "Move It", "MoveIt.Tool.MIT_ToolSystem", isReplayingUndo: false), "GlobalUndo.SkipMoveIt");
+            AssertTrue(!GlobalUndoPolicy.ShouldCaptureForTool(in allOn, "Marquee Delete", "MarqueeDelete.MarqueeDeleteToolSystem", isReplayingUndo: false), "GlobalUndo.SkipOwnMarquee");
+            var masterOff = GlobalUndoTrackOptions.AllEnabled;
+            masterOff.Enabled = false;
+            AssertTrue(!GlobalUndoPolicy.ShouldCaptureForTool(in masterOff, "Net Tool", "Game.Tools.NetToolSystem", isReplayingUndo: false), "GlobalUndo.SkipWhenMasterOff");
+
+            // 3. Category filtering (BulkDelete always allowed even when master switch is off)
+            AssertTrue(GlobalUndoPolicy.IsKindTracked(in masterOff, GlobalUndoActionKind.BulkDelete), "GlobalUndo.BulkDeleteAlwaysTracked");
+            AssertTrue(!GlobalUndoPolicy.IsKindTracked(in masterOff, GlobalUndoActionKind.Build), "GlobalUndo.BuildOffWhenMasterOff");
+            var noTerrain = GlobalUndoTrackOptions.AllEnabled;
+            noTerrain.TrackTerrain = false;
+            AssertTrue(!GlobalUndoPolicy.IsKindTracked(in noTerrain, GlobalUndoActionKind.Terrain), "GlobalUndo.TerrainOffWhenUnchecked");
+            AssertTrue(GlobalUndoPolicy.IsKindTracked(in noTerrain, GlobalUndoActionKind.Zone), "GlobalUndo.ZoneStillOn");
+
+            // 4. Classification & execution phase ordering
+            AssertEqual(GlobalUndoActionKind.None, GlobalUndoPolicy.ClassifyActionKind("Net Tool", false, false, false, false, false), "GlobalUndo.ClassifyNone");
+            AssertEqual(GlobalUndoActionKind.Build, GlobalUndoPolicy.ClassifyActionKind("Net Tool", true, false, false, false, false), "GlobalUndo.ClassifyBuild");
+            AssertEqual(GlobalUndoActionKind.Build, GlobalUndoPolicy.ClassifyActionKind("Net Tool", true, false, false, false, true), "GlobalUndo.ClassifyBuildWithIncidentalTerrain");
+            AssertEqual(GlobalUndoActionKind.Bulldoze, GlobalUndoPolicy.ClassifyActionKind("Bulldoze Tool", false, true, false, false, false), "GlobalUndo.ClassifyBulldoze");
+            AssertEqual(GlobalUndoActionKind.UpgradeReplace, GlobalUndoPolicy.ClassifyActionKind("Net Tool", true, true, false, false, false), "GlobalUndo.ClassifyReplaceCreatedAndDeleted");
+            AssertEqual(GlobalUndoActionKind.UpgradeReplace, GlobalUndoPolicy.ClassifyActionKind("Net Tool", false, false, true, false, false), "GlobalUndo.ClassifyInPlaceUpgrade");
+            AssertEqual(GlobalUndoActionKind.Zone, GlobalUndoPolicy.ClassifyActionKind("Zone Tool", false, false, false, true, false), "GlobalUndo.ClassifyZone");
+            AssertEqual(GlobalUndoActionKind.Terrain, GlobalUndoPolicy.ClassifyActionKind("Terrain Tool", false, false, false, false, true), "GlobalUndo.ClassifyTerrain");
+            AssertEqual(GlobalUndoActionKind.Mixed, GlobalUndoPolicy.ClassifyActionKind("Object Tool", true, false, false, true, true), "GlobalUndo.ClassifyMixed");
+
+            var replacePhases = GlobalUndoPolicy.PlanExecutionPhases(hasCreated: true, hasDeleted: true, hasInPlaceNets: false, hasZone: true, hasTerrain: true);
+            AssertEqual(4, replacePhases.Count, "GlobalUndo.ReplacePhaseCount");
+            AssertEqual(GlobalUndoExecutionPhase.DeletingCreated, replacePhases[0], "GlobalUndo.Phase0DeleteCreated");
+            AssertEqual(GlobalUndoExecutionPhase.WaitingPostDelete, replacePhases[1], "GlobalUndo.Phase1Wait");
+            AssertEqual(GlobalUndoExecutionPhase.RestoringDeleted, replacePhases[2], "GlobalUndo.Phase2RestoreDeleted");
+            AssertEqual(GlobalUndoExecutionPhase.RestoringZoneAndTerrain, replacePhases[3], "GlobalUndo.Phase3ZoneTerrain");
+
+            var buildOnlyPhases = GlobalUndoPolicy.PlanExecutionPhases(hasCreated: true, hasDeleted: false, hasInPlaceNets: false, hasZone: false, hasTerrain: false);
+            AssertEqual(1, buildOnlyPhases.Count, "GlobalUndo.BuildOnlySinglePhase");
+            AssertEqual(GlobalUndoExecutionPhase.DeletingCreated, buildOnlyPhases[0], "GlobalUndo.BuildOnlyDeleteCreated");
+
+            // Road split/extend build undo: InPlaceNets MUST restore moved junction nodes BEFORE DeletionUndo rebuilds deleted edges
+            var splitBuildPhases = GlobalUndoPolicy.PlanExecutionPhases(hasCreated: true, hasDeleted: true, hasInPlaceNets: true, hasZone: false, hasTerrain: false);
+            AssertEqual(5, splitBuildPhases.Count, "GlobalUndo.SplitBuildPhaseCount");
+            AssertEqual(GlobalUndoExecutionPhase.DeletingCreated, splitBuildPhases[0], "GlobalUndo.SplitBuildPhase0DeleteCreated");
+            AssertEqual(GlobalUndoExecutionPhase.WaitingPostDelete, splitBuildPhases[1], "GlobalUndo.SplitBuildPhase1WaitDelete");
+            AssertEqual(GlobalUndoExecutionPhase.RestoringInPlaceNets, splitBuildPhases[2], "GlobalUndo.SplitBuildPhase2RestoreInPlace");
+            AssertEqual(GlobalUndoExecutionPhase.WaitingPostInPlaceNets, splitBuildPhases[3], "GlobalUndo.SplitBuildPhase3WaitInPlace");
+            AssertEqual(GlobalUndoExecutionPhase.RestoringDeleted, splitBuildPhases[4], "GlobalUndo.SplitBuildPhase4RestoreDeleted");
+
+            var inPlaceAndDeletedPhases = GlobalUndoPolicy.PlanExecutionPhases(hasCreated: false, hasDeleted: true, hasInPlaceNets: true, hasZone: false, hasTerrain: false);
+            AssertEqual(3, inPlaceAndDeletedPhases.Count, "GlobalUndo.InPlaceAndDeletedPhaseCount");
+            AssertEqual(GlobalUndoExecutionPhase.RestoringInPlaceNets, inPlaceAndDeletedPhases[0], "GlobalUndo.InPlaceFirst");
+            AssertEqual(GlobalUndoExecutionPhase.WaitingPostInPlaceNets, inPlaceAndDeletedPhases[1], "GlobalUndo.WaitAfterInPlace");
+            AssertEqual(GlobalUndoExecutionPhase.RestoringDeleted, inPlaceAndDeletedPhases[2], "GlobalUndo.DeletedAfterInPlace");
+
+            var createdAndInPlacePhases = GlobalUndoPolicy.PlanExecutionPhases(hasCreated: true, hasDeleted: false, hasInPlaceNets: true, hasZone: false, hasTerrain: false);
+            AssertEqual(3, createdAndInPlacePhases.Count, "GlobalUndo.CreatedAndInPlacePhaseCount");
+            AssertEqual(GlobalUndoExecutionPhase.DeletingCreated, createdAndInPlacePhases[0], "GlobalUndo.CreatedAndInPlace0");
+            AssertEqual(GlobalUndoExecutionPhase.WaitingPostDelete, createdAndInPlacePhases[1], "GlobalUndo.CreatedAndInPlace1");
+            AssertEqual(GlobalUndoExecutionPhase.RestoringInPlaceNets, createdAndInPlacePhases[2], "GlobalUndo.CreatedAndInPlace2");
+
+            // 5. History depth clamping (1..20, default 10)
+            AssertEqual(10, GlobalUndoPolicy.DefaultHistoryDepth, "GlobalUndo.DefaultDepth10");
+            AssertEqual(1, GlobalUndoPolicy.ClampHistoryDepth(0), "GlobalUndo.ClampMin1");
+            AssertEqual(1, GlobalUndoPolicy.ClampHistoryDepth(-5), "GlobalUndo.ClampNegTo1");
+            AssertEqual(10, GlobalUndoPolicy.ClampHistoryDepth(10), "GlobalUndo.ClampMid");
+            AssertEqual(20, GlobalUndoPolicy.ClampHistoryDepth(20), "GlobalUndo.ClampMax20");
+            AssertEqual(20, GlobalUndoPolicy.ClampHistoryDepth(50), "GlobalUndo.ClampOverMax");
+
+            // 6. History JSON serialization escaping
+            var summaries = new List<GlobalUndoStepSummary>
+            {
+                new GlobalUndoStepSummary
+                {
+                    StepId = 7,
+                    Kind = GlobalUndoActionKind.UpgradeReplace,
+                    ToolId = "Net \"Tool\"\\1",
+                    ItemCount = 3,
+                    CreatedCount = 1,
+                    DeletedCount = 1,
+                    InPlaceNetCount = 1,
+                    ZoneBlockCount = 0,
+                    TerrainTileCount = 0,
+                    TerrainEvicted = false,
+                    CreatedUnixSeconds = 1700000000,
+                }
+            };
+            string json = GlobalUndoPolicy.SerializeHistoryJson(summaries);
+            AssertTrue(json.Contains("\"kind\":\"upgrade\""), "GlobalUndo.JsonKind");
+            AssertTrue(json.Contains("\"tool\":\"Net \\\"Tool\\\"\\\\1\""), "GlobalUndo.JsonEscapedTool");
+            AssertEqual("[]", GlobalUndoPolicy.SerializeHistoryJson(null), "GlobalUndo.JsonEmptyNull");
+
+            // 7. Stroke coalescing
+            var coalescer = new StrokeCoalescerState(idleGapFrames: 3);
+            AssertTrue(!coalescer.ShouldCoalesce("Terrain Tool", true, 100), "Coalesce.NoOpenStrokeInitially");
+            coalescer.RecordApply("Terrain Tool", isBrushing: true, currentFrame: 100);
+            AssertTrue(coalescer.ShouldCoalesce("Terrain Tool", true, 101), "Coalesce.NextFrameSameBrush");
+            coalescer.RecordApply("Terrain Tool", isBrushing: true, currentFrame: 101);
+            AssertTrue(coalescer.ShouldCoalesce("Terrain Tool", true, 108), "Coalesce.ContinuousBrushShortPause");
+            AssertTrue(!coalescer.ShouldCoalesce("Zone Tool", false, 102), "Coalesce.ToolSwitchBreaksStroke");
+            AssertTrue(coalescer.ShouldFinalize("Zone Tool", false, appliedThisFrame: false, currentFrame: 102), "Coalesce.ToolSwitchFinalizes");
+            AssertTrue(coalescer.ShouldFinalize("Terrain Tool", isBrushing: false, appliedThisFrame: false, currentFrame: 102), "Coalesce.MouseReleaseFinalizesAfter1Frame");
+            AssertTrue(!coalescer.ShouldFinalize("Terrain Tool", isBrushing: true, appliedThisFrame: true, currentFrame: 102), "Coalesce.ActiveFrameDoesNotFinalize");
+            coalescer.Reset();
+            AssertTrue(!coalescer.HasOpenStroke, "Coalesce.ResetClears");
+        }
+
+        private static void TestGlobalUndoTerrainTilesAndEviction()
+        {
+            // 1. 64x64 dirty tile range math & boundary checks
+            AssertTrue(
+                TerrainTileLogic.ComputeDirtyTileRange(
+                    worldMinX: 0f, worldMinZ: 0f, worldMaxX: 10f, worldMaxZ: 10f,
+                    offsetX: 0f, offsetZ: 0f, scaleX: 1f, scaleZ: 1f,
+                    resX: 4096, resZ: 4096, padPixels: 0,
+                    out int minTx, out int maxTx, out int minTz, out int maxTz),
+                "TerrainTile.OriginValid");
+            AssertEqual(0, minTx, "TerrainTile.OriginMinTx");
+            AssertEqual(0, maxTx, "TerrainTile.OriginMaxTx");
+            AssertEqual(0, minTz, "TerrainTile.OriginMinTz");
+            AssertEqual(0, maxTz, "TerrainTile.OriginMaxTz");
+
+            // Crossing tile boundary 63 -> 64
+            AssertTrue(
+                TerrainTileLogic.ComputeDirtyTileRange(
+                    worldMinX: 62f, worldMinZ: 63f, worldMaxX: 65f, worldMaxZ: 128f,
+                    offsetX: 0f, offsetZ: 0f, scaleX: 1f, scaleZ: 1f,
+                    resX: 4096, resZ: 4096, padPixels: 0,
+                    out minTx, out maxTx, out minTz, out maxTz),
+                "TerrainTile.CrossBoundaryValid");
+            AssertEqual(0, minTx, "TerrainTile.CrossMinTx");
+            AssertEqual(1, maxTx, "TerrainTile.CrossMaxTx");
+            AssertEqual(0, minTz, "TerrainTile.CrossMinTz");
+            AssertEqual(2, maxTz, "TerrainTile.CrossMaxTz");
+
+            // Invalid inputs (NaN, out-of-map, zero scale)
+            AssertTrue(!TerrainTileLogic.ComputeDirtyTileRange(float.NaN, 0f, 10f, 10f, 0f, 0f, 1f, 1f, 4096, 4096, 0, out _, out _, out _, out _), "TerrainTile.RejectNaN");
+            AssertTrue(!TerrainTileLogic.ComputeDirtyTileRange(-500f, -500f, -100f, -100f, 0f, 0f, 1f, 1f, 4096, 4096, 0, out _, out _, out _, out _), "TerrainTile.RejectOutOfMap");
+            AssertTrue(!TerrainTileLogic.ComputeDirtyTileRange(0f, 0f, 10f, 10f, 0f, 0f, 0f, 1f, 4096, 4096, 0, out _, out _, out _, out _), "TerrainTile.RejectZeroScale");
+
+            // 2. First-write-wins & sparse interior fallback packing
+            var patch = new TerrainPatchData(4096, 4096);
+            var firstTile = new ushort[TerrainTileLogic.PixelsPerTile];
+            var secondTile = new ushort[TerrainTileLogic.PixelsPerTile];
+            for (int i = 0; i < firstTile.Length; i++) { firstTile[i] = 1234; secondTile[i] = 9999; }
+
+            var k00 = new TerrainTileKey(0, 0);
+            var k20 = new TerrainTileKey(2, 0); // leaves (1,0) untouched in the middle!
+            AssertTrue(patch.TryRecordTile(k00, firstTile), "TerrainPatch.FirstWriteAccepted");
+            AssertTrue(!patch.TryRecordTile(k00, secondTile), "TerrainPatch.SecondWriteIgnoredFirstWins");
+            AssertEqual((ushort)1234, patch.Tiles[k00][0], "TerrainPatch.PreservedOriginalHeight");
+            AssertTrue(patch.TryRecordTile(k20, secondTile), "TerrainPatch.SecondDistinctTileAccepted");
+            AssertEqual(2L * TerrainTileLogic.BytesPerTile, patch.EstimatedBytes, "TerrainPatch.BytesExact");
+
+            var compactBatches = patch.BuildCopyBatches((px, pz) => (ushort)777);
+            AssertEqual(1, compactBatches.Count, "TerrainPatch.SameSuperBlockMergedIntoOneBatch");
+            AssertEqual(192, compactBatches[0].Width, "TerrainPatch.MergedWidth192");
+            AssertEqual(64, compactBatches[0].Height, "TerrainPatch.MergedHeight64");
+            AssertEqual((ushort)1234, compactBatches[0].Pixels[0], "TerrainPatch.LeftTilePixelPreserved");
+            AssertEqual((ushort)777, compactBatches[0].Pixels[64], "TerrainPatch.InteriorUntouchedTileFilledFromFallback");
+            AssertEqual((ushort)9999, compactBatches[0].Pixels[128], "TerrainPatch.RightTilePixelPreserved");
+
+            // 3. Far diagonal stroke splits into separate bounded super-blocks (never allocates 4096x4096)
+            var diagPatch = new TerrainPatchData(4096, 4096);
+            diagPatch.TryRecordTile(new TerrainTileKey(0, 0), firstTile);
+            diagPatch.TryRecordTile(new TerrainTileKey(60, 60), secondTile);
+            var diagBatches = diagPatch.BuildCopyBatches((px, pz) => 0);
+            AssertEqual(2, diagBatches.Count, "TerrainPatch.DiagonalSplitInto2BoundedBatches");
+            AssertEqual(64, diagBatches[0].Width, "TerrainPatch.DiagBatch0Bounded64");
+            AssertEqual(64, diagBatches[1].Width, "TerrainPatch.DiagBatch1Bounded64");
+
+            // 4. 32 MB memory cap eviction on GlobalUndoHistoryStack
+            const long MB = 1024L * 1024L;
+            var stack = new GlobalUndoHistoryStack<FakeGlobalUndoItem>(maxDepth: 10, terrainBudgetBytes: 32L * MB);
+            var t1 = new FakeGlobalUndoItem { Tag = "terrain1", TerrainBytes = 12L * MB, HasNonTerrainPayload = false };
+            var t2 = new FakeGlobalUndoItem { Tag = "mixed2", TerrainBytes = 12L * MB, HasNonTerrainPayload = true };
+            var t3 = new FakeGlobalUndoItem { Tag = "terrain3", TerrainBytes = 12L * MB, HasNonTerrainPayload = false };
+            stack.Push(t1);
+            stack.Push(t2);
+            AssertEqual(24L * MB, stack.TotalTerrainBytes, "TerrainBudget.Under32MBNoEvict");
+            AssertEqual(2, stack.Count, "TerrainBudget.BothKept");
+
+            int evicted = stack.Push(t3); // total would be 36 MB > 32 MB -> evicts oldest (t1, dropped since terrain-only)
+            AssertEqual(1, evicted, "TerrainBudget.EvictedOldest1");
+            AssertTrue(t1.TerrainEvicted, "TerrainBudget.T1Evicted");
+            AssertEqual(2, stack.Count, "TerrainBudget.TerrainOnlyDropped");
+            AssertEqual(24L * MB, stack.TotalTerrainBytes, "TerrainBudget.Remaining24MB");
+
+            var t4 = new FakeGlobalUndoItem { Tag = "terrain4", TerrainBytes = 16L * MB, HasNonTerrainPayload = false };
+            int evicted2 = stack.Push(t4); // 24 + 16 = 40 MB -> evicts t2's terrain (mixed2 stays!), total = 28 MB
+            AssertEqual(1, evicted2, "TerrainBudget.EvictedMixedTerrain");
+            AssertTrue(t2.TerrainEvicted, "TerrainBudget.MixedTerrainEvicted");
+            AssertEqual(3, stack.Count, "TerrainBudget.MixedTransactionPreservedAfterTerrainEviction");
+            AssertEqual(28L * MB, stack.TotalTerrainBytes, "TerrainBudget.Final28MBWithin32MB");
+
+            // Stack max depth enforcement & clear
+            stack.SetMaxDepth(2);
+            AssertEqual(2, stack.Count, "HistoryStack.TrimOnSetMaxDepth");
+            AssertEqual("terrain4", stack.Peek().Tag, "HistoryStack.NewestOnTop");
+            AssertEqual("terrain4", stack.Pop().Tag, "HistoryStack.PopLIFO");
+            AssertEqual(1, stack.Count, "HistoryStack.CountAfterPop");
+            stack.Clear();
+            AssertEqual(0, stack.Count, "HistoryStack.EmptyAfterClear");
+            AssertEqual(0L, stack.TotalTerrainBytes, "HistoryStack.ZeroTerrainAfterClear");
+        }
+
+        private static void TestGlobalUndoZoneValidationAndSettings()
+        {
+            // 1. Zone restore validation
+            AssertEqual(ZoneRestoreVerdict.Valid, ZoneBlockValidationLogic.ValidateRestore(true, 6, 4, 6, 4, 24, 24), "Zone.Valid");
+            AssertEqual(ZoneRestoreVerdict.BlockMissing, ZoneBlockValidationLogic.ValidateRestore(false, 6, 4, 0, 0, 24, 0), "Zone.Missing");
+            AssertEqual(ZoneRestoreVerdict.SizeMismatch, ZoneBlockValidationLogic.ValidateRestore(true, 6, 4, 5, 4, 24, 20), "Zone.SizeMismatch");
+            AssertEqual(ZoneRestoreVerdict.EmptyOrCorrupt, ZoneBlockValidationLogic.ValidateRestore(true, 6, 4, 6, 4, 20, 24), "Zone.CorruptRecordedLength");
+            AssertEqual(ZoneRestoreVerdict.EmptyOrCorrupt, ZoneBlockValidationLogic.ValidateRestore(true, 0, 4, 0, 4, 0, 0), "Zone.ZeroSize");
+
+            // 2. Verify Settings.cs defaults & Localization.cs entries for Global Undo
+            string baseDir = AppContext.BaseDirectory;
+            string rootDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(baseDir, "..", "..", "..", ".."));
+            string settingsSrc = System.IO.File.ReadAllText(System.IO.Path.Combine(rootDir, "Settings.cs"));
+            string locSrc = System.IO.File.ReadAllText(System.IO.Path.Combine(rootDir, "Localization.cs"));
+
+            AssertTrue(settingsSrc.Contains("public bool EnablePanelGlow { get; set; } = false;"), "Settings.PanelGlowDefaultOff");
+            AssertTrue(settingsSrc.Contains("public bool EnableUndoProgressFx { get; set; } = false;"), "Settings.UndoFxDefaultOff");
+            AssertTrue(settingsSrc.Contains("max = 20f") && settingsSrc.Contains("MaxUndoHistorySteps { get; set; } = 10;"), "Settings.MaxUndoStepsRange20Default10");
+
+            int zhStart = locSrc.IndexOf("public sealed class LocaleZH", StringComparison.Ordinal);
+            Dictionary<string, string> enDict = ParseLocaleEntries(locSrc.Substring(0, zhStart));
+            Dictionary<string, string> zhDict = ParseLocaleEntries(locSrc.Substring(zhStart));
+
+            string[] globalUndoProps =
+            {
+                "EnableGlobalUndo",
+                "UndoTrackBuild",
+                "UndoTrackBulldoze",
+                "UndoTrackUpgrade",
+                "UndoTrackZone",
+                "UndoTrackTerrain",
+            };
+            foreach (string prop in globalUndoProps)
+            {
+                string labelKey = $"m_Settings.GetOptionLabelLocaleID(nameof(Settings.{prop}))";
+                string descKey = $"m_Settings.GetOptionDescLocaleID(nameof(Settings.{prop}))";
+                AssertLocaleEntryValid(enDict, "EN", labelKey, prop);
+                AssertLocaleEntryValid(enDict, "EN", descKey, prop);
+                AssertLocaleEntryValid(zhDict, "ZH", labelKey, prop);
+                AssertLocaleEntryValid(zhDict, "ZH", descKey, prop);
+            }
+
+            // 3. Relative timestamp locale keys exist in both EN and ZH
+            string[] timeKeys =
+            {
+                "\"MarqueeDelete.GlobalUndoTimeJustNow\"",
+                "\"MarqueeDelete.GlobalUndoTimeSeconds\"",
+                "\"MarqueeDelete.GlobalUndoTimeMinutes\"",
+                "\"MarqueeDelete.GlobalUndoTimeHours\"",
+            };
+            foreach (string tk in timeKeys)
+            {
+                AssertLocaleEntryValid(enDict, "EN", tk, tk);
+                AssertLocaleEntryValid(zhDict, "ZH", tk, tk);
+            }
+
+            // 4. Open-stroke trackability (untracked category must never leak CanUndo = true)
+            var noBulldoze = GlobalUndoTrackOptions.AllEnabled;
+            noBulldoze.TrackBulldoze = false;
+            AssertTrue(!GlobalUndoPolicy.IsOpenStrokeTrackable(in noBulldoze, "Bulldoze Tool", false, true, false, false, false),
+                "OpenStroke.UntrackedBulldozeNotUndoable");
+            AssertTrue(GlobalUndoPolicy.IsOpenStrokeTrackable(in noBulldoze, "Net Tool", true, false, false, false, false),
+                "OpenStroke.TrackedBuildUndoable");
+            AssertTrue(!GlobalUndoPolicy.IsOpenStrokeTrackable(in noBulldoze, "Net Tool", false, false, false, false, false),
+                "OpenStroke.EmptyNotUndoable");
+
+            // 5. Terrain TriggerAsyncChange direct invocation only when cascades are frozen
+            AssertTrue(!GlobalUndoPolicy.ShouldTriggerTerrainAsyncChangeDirectly(freezeCascadeUpdates: false),
+                "Terrain.DeferAsyncChangeToRenderCascadesNormally");
+            AssertTrue(GlobalUndoPolicy.ShouldTriggerTerrainAsyncChangeDirectly(freezeCascadeUpdates: true),
+                "Terrain.DirectAsyncChangeWhenFrozen");
+
+            // 6. Reversed one-way edge endpoint restoration guard
+            AssertTrue(GlobalUndoPolicy.ShouldRestoreReversedEdgeEndpoints(10, 1, 20, 2, 20, 2, 10, 1),
+                "InPlaceNet.ExactReversedPairAllowed");
+            AssertTrue(!GlobalUndoPolicy.ShouldRestoreReversedEdgeEndpoints(10, 1, 20, 2, 10, 1, 20, 2),
+                "InPlaceNet.SameDirectionSkipped");
+            AssertTrue(!GlobalUndoPolicy.ShouldRestoreReversedEdgeEndpoints(10, 1, 20, 2, 20, 3, 10, 1),
+                "InPlaceNet.VersionMismatchRejected");
+            AssertTrue(!GlobalUndoPolicy.ShouldRestoreReversedEdgeEndpoints(10, 1, 20, 2, 30, 1, 10, 1),
+                "InPlaceNet.UnrelatedNodeRejected");
+            AssertTrue(!GlobalUndoPolicy.ShouldRestoreReversedEdgeEndpoints(10, 1, 10, 1, 10, 1, 10, 1),
+                "InPlaceNet.SelfLoopRejected");
+        }
+
+        private static void TestGlobalUndoEscapeIsolationAndPriority()
+        {
+            // 1. ResolveEscapeAction 8-arg priority:
+            // ImportantModal > ColorModal > GlobalUndoPanel > CancelPointerOrDrag > ClearSelection > None
+            AssertEqual(
+                EscapeAction.CloseImportantModal,
+                MarqueePointerLogic.ResolveEscapeAction(true, true, true, true, true, true, true, true),
+                "GlobalUndoEsc.ImportantBeatsAll");
+            AssertEqual(
+                EscapeAction.CloseColorModal,
+                MarqueePointerLogic.ResolveEscapeAction(false, true, true, true, true, true, true, true),
+                "GlobalUndoEsc.ColorModalBeatsGlobalUndoAndTool");
+            AssertEqual(
+                EscapeAction.CloseGlobalUndoPanel,
+                MarqueePointerLogic.ResolveEscapeAction(false, false, true, true, true, true, true, true),
+                "GlobalUndoEsc.GlobalUndoBeatsDragAndSelection");
+            AssertEqual(
+                EscapeAction.CancelPointerOrDrag,
+                MarqueePointerLogic.ResolveEscapeAction(false, false, false, true, false, false, true, true),
+                "GlobalUndoEsc.DragBeatsClearSelection");
+            AssertEqual(
+                EscapeAction.CancelPointerOrDrag,
+                MarqueePointerLogic.ResolveEscapeAction(false, false, false, false, false, true, true, true),
+                "GlobalUndoEsc.PolygonDraftBeatsClearSelection");
+            AssertEqual(
+                EscapeAction.ClearSelection,
+                MarqueePointerLogic.ResolveEscapeAction(false, false, false, false, false, false, true, false),
+                "GlobalUndoEsc.PendingClears");
+            AssertEqual(
+                EscapeAction.ClearSelection,
+                MarqueePointerLogic.ResolveEscapeAction(false, false, false, false, false, false, false, true),
+                "GlobalUndoEsc.RetainedEditsClears");
+            AssertEqual(
+                EscapeAction.None,
+                MarqueePointerLogic.ResolveEscapeAction(false, false, false, false, false, false, false, false),
+                "GlobalUndoEsc.IdleNone");
+
+            // Legacy 7-arg ResolveEscapeAction & 10/11-arg TryConsumeToolEscape remain backwards-compatible
+            AssertEqual(
+                EscapeAction.CloseColorModal,
+                MarqueePointerLogic.ResolveEscapeAction(false, true, true, false, true, true, false),
+                "GlobalUndoEsc.Legacy7ArgResolveCompat");
+            AssertEqual(
+                EscapeAction.CancelPointerOrDrag,
+                MarqueePointerLogic.TryConsumeToolEscape(null, 10, true, true, false, false, true, false, true, false),
+                "GlobalUndoEsc.Legacy10ArgTryConsumeCompat");
+            AssertEqual(
+                EscapeAction.CancelPointerOrDrag,
+                MarqueePointerLogic.TryConsumeToolEscape(null, 10, true, true, false, false, false, false, true, true, false),
+                "GlobalUndoEsc.Legacy11ArgTryConsumeCompat");
+
+            // 2. TryConsumeUiGlobalUndoEscape gate & guard checks
+            var gate = new EscapeFrameGate();
+            AssertTrue(
+                !MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 100, globalUndoPanelOpen: false, colorModalOpen: false, importantModalOpen: false, allowInput: true, escapePressedThisFrame: true),
+                "GlobalUndoEsc.ClosedPanelReturnsFalse");
+            AssertTrue(!gate.IsConsumedThisFrame(100), "GlobalUndoEsc.ClosedDoesNotConsumeGate");
+
+            AssertTrue(
+                !MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 100, globalUndoPanelOpen: true, colorModalOpen: true, importantModalOpen: false, allowInput: true, escapePressedThisFrame: true),
+                "GlobalUndoEsc.ColorModalOpenBlocksUiGlobalUndo");
+            AssertTrue(!gate.IsConsumedThisFrame(100), "GlobalUndoEsc.ColorModalBlockedDoesNotConsumeGate");
+
+            AssertTrue(
+                !MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 100, globalUndoPanelOpen: true, colorModalOpen: false, importantModalOpen: true, allowInput: true, escapePressedThisFrame: true),
+                "GlobalUndoEsc.ImportantModalOpenBlocksUiGlobalUndo");
+            AssertTrue(!gate.IsConsumedThisFrame(100), "GlobalUndoEsc.ImportantModalBlockedDoesNotConsumeGate");
+
+            AssertTrue(
+                !MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 100, globalUndoPanelOpen: true, colorModalOpen: false, importantModalOpen: false, allowInput: false, escapePressedThisFrame: true),
+                "GlobalUndoEsc.InputDisallowedBlocksUiGlobalUndo");
+            AssertTrue(
+                !MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 100, globalUndoPanelOpen: true, colorModalOpen: false, importantModalOpen: false, allowInput: true, escapePressedThisFrame: false),
+                "GlobalUndoEsc.NoKeypressReturnsFalse");
+
+            AssertTrue(
+                MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 100, globalUndoPanelOpen: true, colorModalOpen: false, importantModalOpen: false, allowInput: true, escapePressedThisFrame: true),
+                "GlobalUndoEsc.ValidEscConsumesGate");
+            AssertTrue(gate.IsConsumedThisFrame(100), "GlobalUndoEsc.GateConsumedOnFrame100");
+            AssertTrue(
+                !MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 100, globalUndoPanelOpen: true, colorModalOpen: false, importantModalOpen: false, allowInput: true, escapePressedThisFrame: true),
+                "GlobalUndoEsc.SameFrameDoubleConsumeBlocked");
+            AssertTrue(
+                MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(null, 100, globalUndoPanelOpen: true, colorModalOpen: false, importantModalOpen: false, allowInput: true, escapePressedThisFrame: true),
+                "GlobalUndoEsc.NullGateAllowed");
+
+            // 3. Cross-system Esc isolation: UIUpdate -> ToolUpdate order
+            gate.Reset();
+            bool globalUndoOpen = true;
+            bool dragging = true;
+            bool hasPending = true;
+            AssertTrue(
+                MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 200, globalUndoOpen, false, false, true, true),
+                "GlobalUndoEsc.UiToTool_UiClosesGlobalUndo");
+            globalUndoOpen = false;
+            AssertEqual(
+                EscapeAction.None,
+                MarqueePointerLogic.TryConsumeToolEscape(gate, 200, true, true, false, false, globalUndoOpen, dragging, false, false, hasPending, false),
+                "GlobalUndoEsc.UiToTool_ToolSkipsConsumedFrame200");
+            AssertEqual(
+                EscapeAction.CancelPointerOrDrag,
+                MarqueePointerLogic.TryConsumeToolEscape(gate, 201, true, true, false, false, globalUndoOpen, dragging, false, false, hasPending, false),
+                "GlobalUndoEsc.UiToTool_NextFrameCancelsDrag");
+            dragging = false;
+            AssertEqual(
+                EscapeAction.ClearSelection,
+                MarqueePointerLogic.TryConsumeToolEscape(gate, 202, true, true, false, false, globalUndoOpen, dragging, false, false, hasPending, false),
+                "GlobalUndoEsc.UiToTool_ThirdFrameClearsSelection");
+
+            // 4. Cross-system Esc isolation: ToolUpdate -> UIUpdate order (defer without consuming gate)
+            // Full priority cascade starting from ToolUpdate on frame 301 with ImportantModal + ColorModal + GlobalUndo + PolygonDraft + Pending
+            gate.Reset();
+            var session = new MarqueeToolSession();
+            session.SetMode(MarqueeSelectionMode.Polygon);
+            var polyIn = MakeStepInput(gate, 300, 10.0);
+            polyIn.LeftPressedThisFrame = true;
+            polyIn.HasPending = true;
+            polyIn.PressGroundWorldXZ = new CoordXZ(0f, 0f);
+            session.StepFrame(in polyIn);
+
+            bool impOpen = true;
+            bool colOpen = true;
+            globalUndoOpen = true;
+            hasPending = true;
+
+            // Frame 301: ImportantModal closes in ToolUpdate; UI modals/popover stay open same frame
+            var s301 = MakeStepInput(gate, 301, 11.0);
+            s301.EscapePressedThisFrame = true;
+            s301.ImportantModalOpen = impOpen;
+            s301.ColorModalOpen = colOpen;
+            s301.GlobalUndoPanelOpen = globalUndoOpen;
+            s301.HasPending = hasPending;
+            AssertEqual(ToolStepOutcome.CloseImportantModalWithSound, session.StepFrame(in s301).Outcome, "Cascade.F301_ToolClosesImportant");
+            AssertTrue(gate.IsConsumedThisFrame(301), "Cascade.F301_GateConsumed");
+            impOpen = false;
+            AssertTrue(!MarqueePointerLogic.TryConsumeUiColorModalEscape(gate, 301, true, colOpen, impOpen, true, true), "Cascade.F301_UiSkipsColorModal");
+            AssertTrue(!MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 301, globalUndoOpen, colOpen, impOpen, true, true), "Cascade.F301_UiSkipsGlobalUndo");
+            AssertTrue(colOpen && globalUndoOpen && session.HasPolygonDraft && hasPending, "Cascade.F301_LowerStatesPreserved");
+
+            // Frame 302: ToolUpdate defers CloseColorModal without consuming gate; UIUpdate closes ColorModal & consumes gate
+            var s302 = MakeStepInput(gate, 302, 12.0);
+            s302.EscapePressedThisFrame = true;
+            s302.ImportantModalOpen = impOpen;
+            s302.ColorModalOpen = colOpen;
+            s302.GlobalUndoPanelOpen = globalUndoOpen;
+            s302.HasPending = hasPending;
+            AssertEqual(ToolStepOutcome.DeferredToUiColorModalEscape, session.StepFrame(in s302).Outcome, "Cascade.F302_ToolDefersColorModal");
+            AssertTrue(!gate.IsConsumedThisFrame(302), "Cascade.F302_DeferLeavesGateOpenForUi");
+            AssertTrue(MarqueePointerLogic.TryConsumeUiColorModalEscape(gate, 302, true, colOpen, impOpen, true, true), "Cascade.F302_UiClosesColorModal");
+            colOpen = false;
+            AssertTrue(!MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 302, globalUndoOpen, colOpen, impOpen, true, true), "Cascade.F302_GatePreventsAlsoClosingGlobalUndo");
+            AssertTrue(globalUndoOpen && session.HasPolygonDraft && hasPending, "Cascade.F302_GlobalUndoAndToolPreserved");
+
+            // Frame 303: ToolUpdate defers CloseGlobalUndoPanel without consuming gate; UIUpdate closes GlobalUndoPanel & consumes gate
+            var s303 = MakeStepInput(gate, 303, 13.0);
+            s303.EscapePressedThisFrame = true;
+            s303.ImportantModalOpen = impOpen;
+            s303.ColorModalOpen = colOpen;
+            s303.GlobalUndoPanelOpen = globalUndoOpen;
+            s303.HasPending = hasPending;
+            AssertEqual(ToolStepOutcome.DeferredToUiGlobalUndoEscape, session.StepFrame(in s303).Outcome, "Cascade.F303_ToolDefersGlobalUndo");
+            AssertTrue(!gate.IsConsumedThisFrame(303), "Cascade.F303_DeferLeavesGateOpenForUi");
+            AssertTrue(MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 303, globalUndoOpen, colOpen, impOpen, true, true), "Cascade.F303_UiClosesGlobalUndo");
+            globalUndoOpen = false;
+            AssertTrue(session.HasPolygonDraft && hasPending, "Cascade.F303_PolyDraftAndPendingPreserved");
+
+            // Frame 304: PolygonDraft cancels
+            var s304 = MakeStepInput(gate, 304, 14.0);
+            s304.EscapePressedThisFrame = true;
+            s304.HasPending = hasPending;
+            AssertEqual(ToolStepOutcome.CancelledActiveInteraction, session.StepFrame(in s304).Outcome, "Cascade.F304_PolyDraftCancels");
+            AssertTrue(!session.HasPolygonDraft && hasPending, "Cascade.F304_PendingPreserved");
+
+            // Frame 305: Pending selection clears
+            var s305 = MakeStepInput(gate, 305, 15.0);
+            s305.EscapePressedThisFrame = true;
+            s305.HasPending = hasPending;
+            AssertEqual(ToolStepOutcome.ClearSelectionWithSound, session.StepFrame(in s305).Outcome, "Cascade.F305_PendingClears");
+
+            // 4b. GlobalUndoPanelOpen also outranks PickSimilarArmed when no PolygonDraft/Dragging is active
+            gate.Reset();
+            session.SetMode(MarqueeSelectionMode.Rectangle);
+            session.PickSimilarArmed = true;
+            var s350 = MakeStepInput(gate, 350, 16.0);
+            s350.EscapePressedThisFrame = true;
+            s350.GlobalUndoPanelOpen = true;
+            s350.HasPending = true;
+            AssertEqual(ToolStepOutcome.DeferredToUiGlobalUndoEscape, session.StepFrame(in s350).Outcome, "GlobalUndoEsc.PickSimilarDefersToGlobalUndo");
+            AssertTrue(session.PickSimilarArmed, "GlobalUndoEsc.PickSimilarPreservedOnGlobalUndoCloseFrame");
+            AssertTrue(MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 350, true, false, false, true, true), "GlobalUndoEsc.UiClosesAfterPickSimilarDefer");
+
+            var s351 = MakeStepInput(gate, 351, 17.0);
+            s351.EscapePressedThisFrame = true;
+            s351.GlobalUndoPanelOpen = false;
+            s351.HasPending = true;
+            AssertEqual(ToolStepOutcome.CancelPickSimilarWithSound, session.StepFrame(in s351).Outcome, "GlobalUndoEsc.NextFrameCancelsPickSimilar");
+            AssertTrue(!session.PickSimilarArmed, "GlobalUndoEsc.PickSimilarDisarmedNextFrame");
+
+            // 5. React-triggered OnSetGlobalUndoPanelOpen(false) consumes EscapeGate before ToolUpdate on same frame
+            gate.Reset();
+            session.Dragging = true;
+            AssertTrue(gate.TryConsume(400), "ReactEsc.UiTriggerConsumesFrame400");
+            var s400 = MakeStepInput(gate, 400, 20.0);
+            s400.EscapePressedThisFrame = true;
+            s400.LeftStillPressed = true;
+            s400.GlobalUndoPanelOpen = false; // already flipped by OnSetGlobalUndoPanelOpen
+            s400.HasPending = true;
+            AssertEqual(ToolStepOutcome.RectangleContinueDrag, session.StepFrame(in s400).Outcome, "ReactEsc.ToolContinuesDragInsteadOfCancellingOnFrame400");
+            AssertTrue(session.Dragging, "ReactEsc.DragPreservedOnFrame400");
+
+            gate.Reset();
+            session.CancelActiveInteraction();
+            session.SetMode(MarqueeSelectionMode.Polygon);
+            var p401 = MakeStepInput(gate, 401, 21.0);
+            p401.LeftPressedThisFrame = true;
+            p401.PressGroundWorldXZ = new CoordXZ(0f, 0f);
+            session.StepFrame(in p401);
+            AssertTrue(gate.TryConsume(402), "ReactEsc.UiTriggerConsumesFrame402");
+            var s402 = MakeStepInput(gate, 402, 22.0);
+            s402.EscapePressedThisFrame = true;
+            s402.GlobalUndoPanelOpen = false;
+            s402.HasPending = true;
+            AssertEqual(ToolStepOutcome.None, session.StepFrame(in s402).Outcome, "ReactEsc.ToolSkipsPolygonCancelOnFrame402");
+            AssertTrue(session.HasPolygonDraft, "ReactEsc.PolygonDraftPreservedOnFrame402");
+
+            // 6. TryAcceptUiGlobalUndoClose enforces modal priority and EscapeFrameGate isolation
+            gate.Reset();
+            AssertTrue(
+                MarqueePointerLogic.TryAcceptUiGlobalUndoClose(gate, 500, wasOpen: true, targetOpen: true, colorModalOpen: true, importantModalOpen: true, escapePressedThisFrame: true),
+                "ReactCloseGate.OpenAlwaysAccepted");
+            AssertTrue(!gate.IsConsumedThisFrame(500), "ReactCloseGate.OpenDoesNotConsumeGate");
+
+            AssertTrue(
+                MarqueePointerLogic.TryAcceptUiGlobalUndoClose(gate, 500, wasOpen: true, targetOpen: false, colorModalOpen: true, importantModalOpen: true, escapePressedThisFrame: false),
+                "ReactCloseGate.MouseClickClosesWithoutTouchingGate");
+            AssertTrue(!gate.IsConsumedThisFrame(500), "ReactCloseGate.MouseClickDoesNotConsumeGate");
+
+            AssertTrue(
+                !MarqueePointerLogic.TryAcceptUiGlobalUndoClose(gate, 500, wasOpen: true, targetOpen: false, colorModalOpen: true, importantModalOpen: false, escapePressedThisFrame: true),
+                "ReactCloseGate.EscBlockedWhenColorModalOpen");
+            AssertTrue(!gate.IsConsumedThisFrame(500), "ReactCloseGate.BlockedColorModalDoesNotConsumeGate");
+
+            AssertTrue(
+                !MarqueePointerLogic.TryAcceptUiGlobalUndoClose(gate, 500, wasOpen: true, targetOpen: false, colorModalOpen: false, importantModalOpen: true, escapePressedThisFrame: true),
+                "ReactCloseGate.EscBlockedWhenImportantModalOpen");
+            AssertTrue(!gate.IsConsumedThisFrame(500), "ReactCloseGate.BlockedImportantModalDoesNotConsumeGate");
+
+            AssertTrue(
+                MarqueePointerLogic.TryAcceptUiGlobalUndoClose(gate, 500, wasOpen: true, targetOpen: false, colorModalOpen: false, importantModalOpen: false, escapePressedThisFrame: true),
+                "ReactCloseGate.ValidEscCloseAcceptedAndConsumesGate");
+            AssertTrue(gate.IsConsumedThisFrame(500), "ReactCloseGate.GateConsumedAfterValidEscClose");
+            AssertTrue(
+                !MarqueePointerLogic.TryAcceptUiGlobalUndoClose(gate, 500, wasOpen: true, targetOpen: false, colorModalOpen: false, importantModalOpen: false, escapePressedThisFrame: true),
+                "ReactCloseGate.SameFrameDoubleEscCloseBlocked");
+            AssertTrue(
+                MarqueePointerLogic.TryAcceptUiGlobalUndoClose(gate, 500, wasOpen: false, targetOpen: false, colorModalOpen: false, importantModalOpen: false, escapePressedThisFrame: true),
+                "ReactCloseGate.AlreadyClosedNoOpAccepted");
+
+            // 7. FreehandDrawing also defers to GlobalUndoPanelOpen on Esc
+            gate.Reset();
+            session.CancelActiveInteraction();
+            session.SetMode(MarqueeSelectionMode.Freehand);
+            var f600 = MakeStepInput(gate, 600, 30.0);
+            f600.LeftPressedThisFrame = true;
+            f600.PressGroundWorldXZ = new CoordXZ(0f, 0f);
+            AssertEqual(ToolStepOutcome.FreehandStrokeStarted, session.StepFrame(in f600).Outcome, "FreehandEsc.Started");
+
+            var f601 = MakeStepInput(gate, 601, 31.0);
+            f601.EscapePressedThisFrame = true;
+            f601.LeftStillPressed = true;
+            f601.GlobalUndoPanelOpen = true;
+            f601.HasCursorWorld = true;
+            f601.CursorWorldXZ = new CoordXZ(5f, 0f);
+            AssertEqual(ToolStepOutcome.DeferredToUiGlobalUndoEscape, session.StepFrame(in f601).Outcome, "FreehandEsc.DefersToGlobalUndo");
+            AssertTrue(session.FreehandDrawing, "FreehandEsc.StrokePreservedOnGlobalUndoCloseFrame");
+            AssertTrue(MarqueePointerLogic.TryConsumeUiGlobalUndoEscape(gate, 601, true, false, false, true, true), "FreehandEsc.UiConsumesGateOnFrame601");
+        }
+
+        private static void TestGlobalUndoRoadBuildClassificationAndSplitChain()
+        {
+            // 1. ClassifyActionKind: semantic upgrade vs incidental build adjustments
+            AssertEqual(
+                GlobalUndoActionKind.Build,
+                GlobalUndoPolicy.ClassifyActionKind("Net Tool", hasCreated: false, hasDeleted: false, hasSemanticUpgradeOrReplace: false, hasIncidentalNetAdjustment: true, hasZone: false, hasTerrain: false),
+                "RoadBuildClassify.CombineOnlyIsBuild");
+            AssertEqual(
+                GlobalUndoActionKind.Build,
+                GlobalUndoPolicy.ClassifyActionKind("Net Tool", hasCreated: true, hasDeleted: false, hasSemanticUpgradeOrReplace: false, hasIncidentalNetAdjustment: true, hasZone: false, hasTerrain: false),
+                "RoadBuildClassify.BuildWithReplaceOrSplitIsBuild");
+            AssertEqual(
+                GlobalUndoActionKind.Build,
+                GlobalUndoPolicy.ClassifyActionKind("Net Tool", hasCreated: true, hasDeleted: true, hasSemanticUpgradeOrReplace: false, hasIncidentalNetAdjustment: true, hasZone: false, hasTerrain: false),
+                "RoadBuildClassify.BuildWithAutoDemolishedBuildingIsBuild");
+            AssertEqual(
+                GlobalUndoActionKind.Build,
+                GlobalUndoPolicy.ClassifyActionKind("Net Tool", hasCreated: true, hasDeleted: false, hasSemanticUpgradeOrReplace: false, hasIncidentalNetAdjustment: true, hasZone: false, hasTerrain: true),
+                "RoadBuildClassify.BuildWithIncidentalTerrainIsBuild");
+            AssertEqual(
+                GlobalUndoActionKind.Mixed,
+                GlobalUndoPolicy.ClassifyActionKind("Net Tool", hasCreated: true, hasDeleted: false, hasSemanticUpgradeOrReplace: false, hasIncidentalNetAdjustment: true, hasZone: true, hasTerrain: false),
+                "RoadBuildClassify.BuildWithZoneIsMixed");
+            AssertEqual(
+                GlobalUndoActionKind.UpgradeReplace,
+                GlobalUndoPolicy.ClassifyActionKind("Net Tool", hasCreated: true, hasDeleted: false, hasSemanticUpgradeOrReplace: true, hasIncidentalNetAdjustment: true, hasZone: false, hasTerrain: false),
+                "RoadBuildClassify.SemanticUpgradeBeatsIncidental");
+            AssertEqual(
+                GlobalUndoActionKind.UpgradeReplace,
+                GlobalUndoPolicy.ClassifyActionKind("Upgrade Tool", hasCreated: true, hasDeleted: false, hasSemanticUpgradeOrReplace: false, hasIncidentalNetAdjustment: true, hasZone: false, hasTerrain: false),
+                "RoadBuildClassify.UpgradeToolAlwaysUpgradeReplace");
+
+            // Trackability with TrackBuild=true, TrackUpgrade=false
+            var buildOnlyOpts = GlobalUndoTrackOptions.AllEnabled;
+            buildOnlyOpts.TrackUpgrade = false;
+            AssertTrue(
+                GlobalUndoPolicy.IsOpenStrokeTrackable(in buildOnlyOpts, "Net Tool", hasCreated: false, hasDeleted: false, hasSemanticUpgradeOrReplace: false, hasIncidentalNetAdjustment: true, hasZone: false, hasTerrain: false),
+                "RoadBuildClassify.CombineTrackableWhenBuildEnabledUpgradeDisabled");
+            AssertTrue(
+                !GlobalUndoPolicy.IsOpenStrokeTrackable(in buildOnlyOpts, "Net Tool", hasCreated: false, hasDeleted: false, hasSemanticUpgradeOrReplace: true, hasIncidentalNetAdjustment: false, hasZone: false, hasTerrain: false),
+                "RoadBuildClassify.SemanticUpgradeNotTrackableWhenUpgradeDisabled");
+
+            // 2. DistancePointToBezierSq
+            var straightCurve = new NetBezier3(
+                new NetPoint3(0f, 0f, 0f),
+                new NetPoint3(33.333f, 0f, 0f),
+                new NetPoint3(66.667f, 0f, 0f),
+                new NetPoint3(100f, 0f, 0f));
+            AssertTrue(GlobalUndoPolicy.DistancePointToBezierSq(new NetPoint3(50f, 0f, 0f), in straightCurve) < 1e-4f, "SplitBezier.OnLineZeroDist");
+            float latDistSq = GlobalUndoPolicy.DistancePointToBezierSq(new NetPoint3(50f, 0f, 0.5f), in straightCurve);
+            AssertTrue(Math.Abs(latDistSq - 0.25f) < 1e-3f, "SplitBezier.LateralDistSq");
+            float elevDistSq = GlobalUndoPolicy.DistancePointToBezierSq(new NetPoint3(50f, 10f, 0f), in straightCurve);
+            AssertTrue(Math.Abs(elevDistSq - 100f) < 1e-2f, "SplitBezier.ElevatedOverpassDistSq");
+
+            // 3. Straight 2-part split with perpendicular branch ignored
+            var straightPart1 = new SplitChainCandidate
+            {
+                EdgeId = 10, StartNodeId = 1, EndNodeId = 3, PrefabId = 100, OwnerId = 0,
+                StartPos = new NetPoint3(0f, 0f, 0f), MidPos = new NetPoint3(25f, 0f, 0f), EndPos = new NetPoint3(50f, 0f, 0f), Length = 50f,
+            };
+            var straightPart2 = new SplitChainCandidate
+            {
+                EdgeId = 11, StartNodeId = 3, EndNodeId = 2, PrefabId = 100, OwnerId = 0,
+                StartPos = new NetPoint3(50f, 0f, 0f), MidPos = new NetPoint3(75f, 0f, 0f), EndPos = new NetPoint3(100f, 0f, 0f), Length = 50f,
+            };
+            var branchRoad = new SplitChainCandidate
+            {
+                EdgeId = 12, StartNodeId = 3, EndNodeId = 4, PrefabId = 100, OwnerId = 0,
+                StartPos = new NetPoint3(50f, 0f, 0f), MidPos = new NetPoint3(50f, 0f, 25f), EndPos = new NetPoint3(50f, 0f, 50f), Length = 50f,
+            };
+            AssertTrue(
+                GlobalUndoPolicy.IsCollinearSplitChain(in straightCurve, 100f, 1, 2, 100, 0, new[] { straightPart1, straightPart2 }),
+                "SplitChain.Straight2PartValid");
+
+            var matchedIdx = new List<int>();
+            var matchedMids = new List<int>();
+            AssertTrue(
+                GlobalUndoPolicy.TryFindCollinearSplitChain(in straightCurve, 100f, 1, 2, 100, 0, new[] { branchRoad, straightPart2, straightPart1 }, matchedIdx, matchedMids),
+                "SplitChain.FindStraight2PartIgnoringBranch");
+            AssertEqual(2, matchedIdx.Count, "SplitChain.StraightMatchedCount");
+            AssertTrue(matchedIdx.Contains(1) && matchedIdx.Contains(2) && !matchedIdx.Contains(0), "SplitChain.StraightMatchedOnlyHalves");
+            AssertEqual(1, matchedMids.Count, "SplitChain.StraightMidNodeCount");
+            AssertEqual(3, matchedMids[0], "SplitChain.StraightMidNodeId");
+
+            // 4. Curved 3-part split (cubic arc)
+            var curved = new NetBezier3(
+                new NetPoint3(0f, 0f, 0f),
+                new NetPoint3(30f, 0f, 40f),
+                new NetPoint3(70f, 0f, 40f),
+                new NetPoint3(100f, 0f, 0f));
+            // Sample points along curved bezier at t = 0, 1/6, 1/3, 1/2, 2/3, 5/6, 1
+            NetPoint3 Eval(float t)
+            {
+                float u = 1f - t;
+                return new NetPoint3(
+                    u * u * u * curved.A.X + 3f * u * u * t * curved.B.X + 3f * u * t * t * curved.C.X + t * t * t * curved.D.X,
+                    0f,
+                    u * u * u * curved.A.Z + 3f * u * u * t * curved.B.Z + 3f * u * t * t * curved.C.Z + t * t * t * curved.D.Z);
+            }
+            float ApproxArcLen(float t0, float t1)
+            {
+                float len = 0f;
+                NetPoint3 p = Eval(t0);
+                for (int s = 1; s <= 16; s++)
+                {
+                    NetPoint3 q = Eval(t0 + (t1 - t0) * (s / 16f));
+                    float dx = q.X - p.X, dz = q.Z - p.Z;
+                    len += (float)Math.Sqrt(dx * dx + dz * dz);
+                    p = q;
+                }
+                return len;
+            }
+            float totalCurveLen = ApproxArcLen(0f, 1f);
+            var cPart1 = new SplitChainCandidate
+            {
+                EdgeId = 20, StartNodeId = 1, EndNodeId = 10, PrefabId = 200, OwnerId = 0,
+                StartPos = Eval(0f), MidPos = Eval(1f / 6f), EndPos = Eval(1f / 3f), Length = ApproxArcLen(0f, 1f / 3f),
+            };
+            var cPart2 = new SplitChainCandidate
+            {
+                // Intentionally reversed direction (11 -> 10) to test undirected matching
+                EdgeId = 21, StartNodeId = 11, EndNodeId = 10, PrefabId = 200, OwnerId = 0,
+                StartPos = Eval(2f / 3f), MidPos = Eval(0.5f), EndPos = Eval(1f / 3f), Length = ApproxArcLen(1f / 3f, 2f / 3f),
+            };
+            var cPart3 = new SplitChainCandidate
+            {
+                EdgeId = 22, StartNodeId = 11, EndNodeId = 2, PrefabId = 200, OwnerId = 0,
+                StartPos = Eval(2f / 3f), MidPos = Eval(5f / 6f), EndPos = Eval(1f), Length = ApproxArcLen(2f / 3f, 1f),
+            };
+            AssertTrue(
+                GlobalUndoPolicy.TryFindCollinearSplitChain(in curved, totalCurveLen, 1, 2, 200, 0, new[] { cPart3, cPart1, cPart2 }, matchedIdx, matchedMids),
+                "SplitChain.Curved3PartValid");
+            AssertEqual(3, matchedIdx.Count, "SplitChain.Curved3PartCount");
+            AssertEqual(2, matchedMids.Count, "SplitChain.Curved3PartMidCount");
+
+            // 5. Negative cases: prefab mismatch, owner mismatch, off-curve detour, length mismatch, single segment, self-loop
+            var wrongPrefab = straightPart2;
+            wrongPrefab.PrefabId = 999;
+            AssertTrue(
+                !GlobalUndoPolicy.IsCollinearSplitChain(in straightCurve, 100f, 1, 2, 100, 0, new[] { straightPart1, wrongPrefab }),
+                "SplitChain.PrefabMismatchRejected");
+
+            var wrongOwner = straightPart2;
+            wrongOwner.OwnerId = 77;
+            AssertTrue(
+                !GlobalUndoPolicy.IsCollinearSplitChain(in straightCurve, 100f, 1, 2, 100, 0, new[] { straightPart1, wrongOwner }),
+                "SplitChain.OwnerMismatchRejected");
+
+            var offCurvePart1 = straightPart1;
+            offCurvePart1.EndPos = new NetPoint3(50f, 0f, 3f);
+            offCurvePart1.MidPos = new NetPoint3(25f, 0f, 1.5f);
+            var offCurvePart2 = straightPart2;
+            offCurvePart2.StartPos = new NetPoint3(50f, 0f, 3f);
+            offCurvePart2.MidPos = new NetPoint3(75f, 0f, 1.5f);
+            AssertTrue(
+                !GlobalUndoPolicy.IsCollinearSplitChain(in straightCurve, 100f, 1, 2, 100, 0, new[] { offCurvePart1, offCurvePart2 }),
+                "SplitChain.OffCurveDetourRejected");
+
+            var wrongLenPart2 = straightPart2;
+            wrongLenPart2.Length = 60f; // total 110 vs 100 (10% > 3%)
+            AssertTrue(
+                !GlobalUndoPolicy.IsCollinearSplitChain(in straightCurve, 100f, 1, 2, 100, 0, new[] { straightPart1, wrongLenPart2 }),
+                "SplitChain.LengthMismatchRejected");
+
+            AssertTrue(
+                !GlobalUndoPolicy.IsCollinearSplitChain(in straightCurve, 100f, 1, 2, 100, 0, new[] { straightPart1 }),
+                "SplitChain.SingleSegmentRejected");
+
+            AssertTrue(
+                !GlobalUndoPolicy.IsCollinearSplitChain(in straightCurve, 100f, 1, 1, 100, 0, new[] { straightPart1, straightPart2 }),
+                "SplitChain.SelfLoopRejected");
+        }
+
+        private static void TestPrefabDrivenSubNetAndCarrierCleanupSourceGuards()
+        {
+            string baseDir = AppContext.BaseDirectory;
+            string rootDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(baseDir, "..", "..", "..", ".."));
+            string undoSrc = System.IO.File.ReadAllText(System.IO.Path.Combine(rootDir, "DeletionUndo.cs"));
+            string globalSrc = System.IO.File.ReadAllText(System.IO.Path.Combine(rootDir, "GlobalUndo.cs"));
+            string toolSrc = System.IO.File.ReadAllText(System.IO.Path.Combine(rootDir, "MarqueeDeleteToolSystem.cs"));
+
+            AssertTrue(undoSrc.Contains("private static void EmitPrefabSubNets("), "PrefabSubNet.EmitPrefabSubNetsExists");
+            AssertTrue(!undoSrc.Contains("CoursePosFlags.DisableMerge"), "PrefabSubNet.NoDisableMergeInDeletionUndo");
+            AssertTrue(undoSrc.Contains("UndoOperationKind.SubObjectUnit") && undoSrc.Contains("EmitSubObjectUnit("), "PrefabSubNet.AtomicSubObjectUnitExists");
+            AssertTrue(undoSrc.Contains("PrefabSubNetCount"), "PrefabSubNet.RecordsPrefabSubNetCount");
+            AssertTrue(undoSrc.Contains("m_OrphanedCarrierQuery") && undoSrc.Contains("m_PendingCarrierCleanupFrames"), "PrefabSubNet.OrphanedCarrierCleanupExists");
+            AssertTrue(globalSrc.Contains("bool isLeftHandTraffic = false"), "PrefabSubNet.GlobalUndoThreadsLht");
+            AssertTrue(toolSrc.Contains("CityConfigurationSystem") && toolSrc.Contains("leftHandTraffic"), "PrefabSubNet.ToolSystemReadsLht");
         }
     }
 }

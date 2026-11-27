@@ -227,6 +227,19 @@ namespace MarqueeDelete
             CheckType("Game.Net.EdgeGeometry", missing);
             CheckType("Game.Net.SubNet", missing);
             CheckType("Game.Objects.SubObject", missing);
+            CheckType("Game.Tools.ApplyObjectsSystem", missing);
+            CheckType("Game.Tools.ApplyNetSystem", missing);
+            CheckType("Game.Tools.ApplyAreasSystem", missing);
+            CheckType("Game.Tools.ApplyZonesSystem", missing);
+            CheckType("Game.Tools.ApplyBrushesSystem", missing);
+            CheckType("Game.Zones.Block", missing);
+            CheckType("Game.Zones.Cell", missing);
+            CheckType("Game.Simulation.TerrainSystem", missing);
+            CheckType("Game.Tools.Brush", missing);
+            CheckType("Game.Tools.Temp", missing);
+            CheckType("Game.Common.Applied", missing);
+            CheckType("Game.Common.BatchesUpdated", missing);
+            CheckType("Game.Net.SubReplacement", missing);
 
             CompatibilityTier tier;
             string status;

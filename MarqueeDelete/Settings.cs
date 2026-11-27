@@ -23,8 +23,8 @@ namespace MarqueeDelete
 
     [FileLocation("MarqueeDelete")]
     [SettingsUITabOrder(TabGeneral, TabFilters, TabHotkeys)]
-    [SettingsUIGroupOrder(GroupBehavior, GroupCategories, GroupUndo, GroupSafety, GroupHotkeys, GroupHotkeysUndo, GroupHotkeysFilters, GroupAbout)]
-    [SettingsUIShowGroupName(GroupBehavior, GroupCategories, GroupUndo, GroupSafety, GroupHotkeys, GroupHotkeysUndo, GroupHotkeysFilters)]
+    [SettingsUIGroupOrder(GroupBehavior, GroupGlobalUndo, GroupCategories, GroupUndo, GroupSafety, GroupHotkeys, GroupHotkeysUndo, GroupHotkeysFilters, GroupAbout)]
+    [SettingsUIShowGroupName(GroupBehavior, GroupGlobalUndo, GroupCategories, GroupUndo, GroupSafety, GroupHotkeys, GroupHotkeysUndo, GroupHotkeysFilters)]
     [SettingsUIKeyboardAction(ToggleActionName, ActionType.Button, canBeEmpty: true)]
     [SettingsUIKeyboardAction(ConfirmActionName, ActionType.Button, canBeEmpty: true)]
     [SettingsUIKeyboardAction(SwitchModeActionName, ActionType.Button, canBeEmpty: true)]
@@ -62,6 +62,7 @@ namespace MarqueeDelete
         public const string TabHotkeys = "Hotkeys";
 
         public const string GroupBehavior = "Behavior";
+        public const string GroupGlobalUndo = "GlobalUndo";
         public const string GroupCategories = "Categories";
         public const string GroupUndo = "Undo";
         public const string GroupSafety = "Safety";
@@ -138,9 +139,27 @@ namespace MarqueeDelete
         [SettingsUISlider(min = 16f, max = 128f, step = 8f)]
         public int MaxPolygonVertices { get; set; } = 64;
 
-        [SettingsUISection(TabGeneral, GroupBehavior)]
-        [SettingsUISlider(min = 1f, max = 10f, step = 1f)]
-        public int MaxUndoHistorySteps { get; set; } = 5;
+        [SettingsUISection(TabGeneral, GroupGlobalUndo)]
+        public bool EnableGlobalUndo { get; set; } = true;
+
+        [SettingsUISection(TabGeneral, GroupGlobalUndo)]
+        public bool UndoTrackBuild { get; set; } = true;
+
+        [SettingsUISection(TabGeneral, GroupGlobalUndo)]
+        public bool UndoTrackBulldoze { get; set; } = true;
+
+        [SettingsUISection(TabGeneral, GroupGlobalUndo)]
+        public bool UndoTrackUpgrade { get; set; } = true;
+
+        [SettingsUISection(TabGeneral, GroupGlobalUndo)]
+        public bool UndoTrackZone { get; set; } = true;
+
+        [SettingsUISection(TabGeneral, GroupGlobalUndo)]
+        public bool UndoTrackTerrain { get; set; } = true;
+
+        [SettingsUISection(TabGeneral, GroupGlobalUndo)]
+        [SettingsUISlider(min = 1f, max = 20f, step = 1f)]
+        public int MaxUndoHistorySteps { get; set; } = 10;
 
         [SettingsUISection(TabGeneral, GroupBehavior)]
         [SettingsUISlider(min = 400f, max = 5000f, step = 200f)]
@@ -476,7 +495,13 @@ namespace MarqueeDelete
             SelectionMode = (int)MarqueeSelectionMode.Rectangle;
             OverlayDetail = OverlayDetailLevel.Standard;
             MaxPolygonVertices = 64;
-            MaxUndoHistorySteps = 5;
+            EnableGlobalUndo = true;
+            UndoTrackBuild = true;
+            UndoTrackBulldoze = true;
+            UndoTrackUpgrade = true;
+            UndoTrackZone = true;
+            UndoTrackTerrain = true;
+            MaxUndoHistorySteps = 10;
             MaxAssetOverlayBudget = 1600;
             DeletionBatchSize = 128;
             DeletionBatchBudgetMs = 8;
