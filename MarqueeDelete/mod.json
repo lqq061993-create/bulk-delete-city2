@@ -2,7 +2,7 @@
   "id": "MarqueeDelete",
   "displayName": "Bulk Delete · 批量删除",
   "author": "DaFeiYu × HaJiMi × GPT",
-  "version": "2.7.2",
+  "version": "2.7.3",
   "description": "Clean up whole city blocks, twisty intersections, or messy shorelines in seconds with Bulk Delete. Drag a box over anything you want gone, then fine-tune individual objects, filter down to exact asset or zone types, and rebuild anything you removed by mistake.\n\nKey Features\n- Drag-Box Selection: Pull a rectangle from corner to corner, aligned either to your camera angle or world North-South, with live size readouts in cells and meters.\n- Click-to-Refine Editing: Left-click any object to add it to the selection, or right-click individual items to take them out without resetting the whole pass.\n- Selective Step-by-Step Undo: Restore any mix of six static asset types — buildings (with upgrades, sub-lots, and internal links), roads and networks, surfaces, trees, props, and decals. Undo runs in frame-paced batches (up to 5 steps, 8,000 records each) and can be paused or stopped anytime. Restores geometry and basic properties only; households, simulation state, vehicles, and citizens cannot be undone.\n- Full Highlight Customization: Adjust all 18 highlight, selection, and outline colors plus opacity sliders, or switch instantly between 4 built-in presets (including Colorblind Safe).\n- Ground / Underground Split & Safety Guards: Follows the vanilla underground toggle, protects map-edge outside connections, and lists service, unique, or signature buildings for confirmation before demolition.",
   "isCodeMod": true,
   "dependencies": []

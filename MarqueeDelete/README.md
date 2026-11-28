@@ -3,7 +3,7 @@
 ![Bulk Delete Cover](Properties/Thumbnail.png)
 
 `MarqueeDelete` 是《城市：天际线 II》（Cities: Skylines II）的批量拆除与独立全局撤回模组。  
-当前版本为 **v2.7.2**（GitHub Release **1.1**），兼容与符号校验基于游戏 **1.6.4f1**（MVID `46198354D4F94D23BF327E3C085D8B92`）。
+当前版本为 **v2.7.3**（GitHub Release **1.1**），兼容与符号校验基于游戏 **1.6.4f1**（MVID `46198354D4F94D23BF327E3C085D8B92`）。
 
 ---
 
@@ -88,7 +88,7 @@ dotnet restore .\tests\DeletionRegression.csproj
 .\tests\run_tests.ps1
 ```
 
-当前离线验证基线（v2.7.2）：
+当前离线验证基线（v2.7.3）：
 - `verify_cecil.ps1`：1,253 个成员引用 / 381 个类型引用 / 0 未解析
 - `MarqueeDelete.Tests`：3,292 passed, 0 failed
 - `DeletionRegression`：267 passed

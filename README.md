@@ -2,7 +2,7 @@
 
 ![Bulk Delete Cover](MarqueeDelete/Properties/Thumbnail.png)
 
-> **当前发布版本**：Mod **v2.7.2**（GitHub Release **1.1**）｜ **目标游戏构建**：Cities: Skylines II `1.6.4f1`（MVID `46198354D4F94D23BF327E3C085D8B92`）
+> **当前发布版本**：Mod **v2.7.3**（GitHub Release **1.1**）｜ **目标游戏构建**：Cities: Skylines II `1.6.4f1`（MVID `46198354D4F94D23BF327E3C085D8B92`）
 
 ---
 
@@ -58,7 +58,7 @@
 
 ```
 MarqueeDelete/
-├── Mod.cs                          # 模组入口（v2.7.2），初始化兼容层、设置与本地化
+├── Mod.cs                          # 模组入口（v2.7.3），初始化兼容层、设置与本地化
 ├── Compatibility.cs                # 四组兼容边界校验（SearchAndPick / DeletionSubmit / UndoRebuild / UIAccess）
 ├── Settings.cs                     # Mod 设置项、快捷键绑定（含全局撤回 Ctrl+Z）与颜色持久化
 ├── Localization.cs                 # 多语言本地化字典注册

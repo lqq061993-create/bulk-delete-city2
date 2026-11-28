@@ -66,7 +66,7 @@
 	<Screenshot Value="Properties/Screenshots/06-global-undo-ingame.jpg" />
 	<Screenshot Value="Properties/Screenshots/07-settings-panel.jpg" />
 	<Tag Value="Code Mod" />
-  <ModVersion Value="2.7.2" />
+  <ModVersion Value="2.7.3" />
 	<GameVersion Value="1.6*" />
-	<ChangeLog>独立撤回功能，支持建筑道路分区等撤回上一步</ChangeLog>
+	<ChangeLog>修复车辆行人地表贴花选取与连续撤回问题</ChangeLog>
 </Publish>
