@@ -4027,12 +4027,16 @@ namespace MarqueeDelete
                 return;
             }
 
+            SelectionFilterMask mask = Mod.Settings != null
+                ? Mod.Settings.BuildFilterMask()
+                : SelectionFilterMask.All;
             SelectionResult next = SelectionCollector.FilterPendingBySimilarEntity(
                 EntityManager,
                 m_PendingResult,
                 pickedEntity,
                 out MatchSimilarOutcome outcome,
-                out int matchedCount);
+                out int matchedCount,
+                mask);
 
             switch (outcome)
             {

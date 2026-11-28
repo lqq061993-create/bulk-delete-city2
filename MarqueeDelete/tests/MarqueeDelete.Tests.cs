@@ -80,6 +80,7 @@ namespace MarqueeDelete.Tests
             TestGlobalUndoEscapeIsolationAndPriority();
             TestGlobalUndoRoadBuildClassificationAndSplitChain();
             TestPrefabDrivenSubNetAndCarrierCleanupSourceGuards();
+            TestOwnedSafeAreaAndMovingEvaluation();
 
             Console.WriteLine($"Unit tests finished: passed={s_Passed}, failed={s_Failed}");
             return s_Failed == 0 ? 0 : 1;
@@ -4459,6 +4460,111 @@ namespace MarqueeDelete.Tests
             AssertTrue(undoSrc.Contains("m_OrphanedCarrierQuery") && undoSrc.Contains("m_PendingCarrierCleanupFrames"), "PrefabSubNet.OrphanedCarrierCleanupExists");
             AssertTrue(globalSrc.Contains("bool isLeftHandTraffic = false"), "PrefabSubNet.GlobalUndoThreadsLht");
             AssertTrue(toolSrc.Contains("CityConfigurationSystem") && toolSrc.Contains("leftHandTraffic"), "PrefabSubNet.ToolSystemReadsLht");
+        }
+
+        private static void TestOwnedSafeAreaAndMovingEvaluation()
+        {
+            SafetyOptions safety = SafetyOptions.Default;
+
+            // 1. ShouldAllowOwnedSafeArea mask combinations
+            AssertTrue(SelectionClassifier.ShouldAllowOwnedSafeArea(SelectionFilterMask.Areas),
+                "OwnedSafeArea.AreasOnlyAllowed");
+            AssertTrue(SelectionClassifier.ShouldAllowOwnedSafeArea(
+                    SelectionFilterMask.Areas | SelectionFilterMask.Trees | SelectionFilterMask.Props | SelectionFilterMask.Decals | SelectionFilterMask.Moving | SelectionFilterMask.Networks),
+                "OwnedSafeArea.AreasWithNonBuildingFiltersAllowed");
+            AssertTrue(SelectionClassifier.ShouldAllowOwnedSafeArea(FilterPresetValues.CreateSurfacesOnly().BuildFilterMask()),
+                "OwnedSafeArea.SurfacesPresetAllowed");
+            AssertTrue(!SelectionClassifier.ShouldAllowOwnedSafeArea(SelectionFilterMask.Areas | SelectionFilterMask.Buildings),
+                "OwnedSafeArea.BlockedWithBuildings");
+            AssertTrue(!SelectionClassifier.ShouldAllowOwnedSafeArea(SelectionFilterMask.Areas | SelectionFilterMask.Residential),
+                "OwnedSafeArea.BlockedWithResidentialZone");
+            AssertTrue(!SelectionClassifier.ShouldAllowOwnedSafeArea(SelectionFilterMask.Areas | SelectionFilterMask.Commercial),
+                "OwnedSafeArea.BlockedWithCommercialZone");
+            AssertTrue(!SelectionClassifier.ShouldAllowOwnedSafeArea(SelectionFilterMask.Areas | SelectionFilterMask.Industrial),
+                "OwnedSafeArea.BlockedWithIndustrialZone");
+            AssertTrue(!SelectionClassifier.ShouldAllowOwnedSafeArea(SelectionFilterMask.Areas | SelectionFilterMask.Office),
+                "OwnedSafeArea.BlockedWithOfficeZone");
+            AssertTrue(!SelectionClassifier.ShouldAllowOwnedSafeArea(SelectionFilterMask.DefaultStatic),
+                "OwnedSafeArea.BlockedInDefaultStatic");
+            AssertTrue(!SelectionClassifier.ShouldAllowOwnedSafeArea(SelectionFilterMask.All),
+                "OwnedSafeArea.BlockedInAll");
+            AssertTrue(!SelectionClassifier.ShouldAllowOwnedSafeArea(SelectionFilterMask.None),
+                "OwnedSafeArea.BlockedInNone");
+
+            // 2. SelectionClassifier.Evaluate on owned SafeArea
+            var ownedSurface = new EntityFlagsSnapshot { IsSafeArea = true, HasOwner = true };
+            AssertEqual(
+                FilterSkipReason.Accepted,
+                SelectionClassifier.Evaluate(in ownedSurface, SelectionFilterMask.Areas, in safety, out SelectionCategory ownedAreaCat),
+                "OwnedSafeArea.AcceptedWhenAreasOnly");
+            AssertEqual(SelectionCategory.Area, ownedAreaCat, "OwnedSafeArea.CategoryArea");
+
+            AssertEqual(
+                FilterSkipReason.HasOwnerChild,
+                SelectionClassifier.Evaluate(in ownedSurface, SelectionFilterMask.Areas | SelectionFilterMask.Buildings, in safety, out _),
+                "OwnedSafeArea.RejectedWhenBuildingsAlsoEnabled");
+            AssertEqual(
+                FilterSkipReason.HasOwnerChild,
+                SelectionClassifier.Evaluate(in ownedSurface, SelectionFilterMask.Areas | SelectionFilterMask.AllZones, in safety, out _),
+                "OwnedSafeArea.RejectedWhenZonesAlsoEnabled");
+            AssertEqual(
+                FilterSkipReason.HasOwnerChild,
+                SelectionClassifier.Evaluate(in ownedSurface, SelectionFilterMask.Trees, in safety, out _),
+                "OwnedSafeArea.RejectedWhenAreasDisabled");
+
+            // MapTile and District remain strictly protected even if HasOwner/IsSafeArea were somehow set
+            var ownedMapTile = new EntityFlagsSnapshot { IsMapTile = true, IsSafeArea = true, HasOwner = true };
+            AssertEqual(
+                FilterSkipReason.UnsafeAreaType,
+                SelectionClassifier.Evaluate(in ownedMapTile, SelectionFilterMask.Areas, in safety, out _),
+                "OwnedMapTile.StillUnsafeAreaType");
+            var ownedDistrict = new EntityFlagsSnapshot { IsDistrict = true, IsSafeArea = true, HasOwner = true };
+            AssertEqual(
+                FilterSkipReason.UnsafeAreaType,
+                SelectionClassifier.Evaluate(in ownedDistrict, SelectionFilterMask.Areas, in safety, out _),
+                "OwnedDistrict.StillUnsafeAreaType");
+
+            // Terrain/Elevation/OutsideConnection guards still apply before owned SafeArea
+            var terrainSafeArea = new EntityFlagsSnapshot { IsTerrain = true, IsSafeArea = true, HasOwner = true };
+            AssertEqual(
+                FilterSkipReason.InvalidOrInactive,
+                SelectionClassifier.Evaluate(in terrainSafeArea, SelectionFilterMask.Areas, in safety, out _),
+                "OwnedTerrainArea.InvalidOrInactive");
+
+            var undergroundOwnedArea = new EntityFlagsSnapshot { IsSafeArea = true, HasOwner = true, IsUnderground = true };
+            AssertEqual(
+                FilterSkipReason.WrongElevationLayer,
+                SelectionClassifier.Evaluate(in undergroundOwnedArea, SelectionFilterMask.Areas, in safety, undergroundView: false, out _),
+                "OwnedUndergroundArea.WrongElevationLayer");
+
+            var outsideOwnedArea = new EntityFlagsSnapshot { IsSafeArea = true, HasOwner = true, IsOutsideConnection = true };
+            AssertEqual(
+                FilterSkipReason.ProtectedOutsideConnection,
+                SelectionClassifier.Evaluate(in outsideOwnedArea, SelectionFilterMask.Areas, in safety, out _),
+                "OwnedOutsideConnectionArea.Protected");
+
+            // 3. Moving entities (owned and unowned)
+            var ownedMoving = new EntityFlagsSnapshot { IsMoving = true, HasOwner = true };
+            AssertEqual(
+                FilterSkipReason.Accepted,
+                SelectionClassifier.Evaluate(in ownedMoving, SelectionFilterMask.Moving, in safety, out SelectionCategory movCat),
+                "MovingOwned.AcceptedWhenMovingEnabled");
+            AssertEqual(SelectionCategory.Moving, movCat, "MovingOwned.CategoryMoving");
+
+            var unownedMoving = new EntityFlagsSnapshot { IsMoving = true, HasOwner = false };
+            AssertEqual(
+                FilterSkipReason.FilteredOutByCategory,
+                SelectionClassifier.Evaluate(in unownedMoving, SelectionFilterMask.DefaultStatic, in safety, out _),
+                "MovingUnowned.FilteredWhenMovingDisabled");
+
+            // 4. Decal / large prop edge intersection when center is outside marquee
+            var box = MarqueeShapeXZ.FromPoints(new CoordXZ(10f, 10f), new CoordXZ(20f, 20f), default, false);
+            var outsideCenter = new CoordXZ(5f, 15f);
+            AssertTrue(!box.ContainsPoint(outsideCenter), "LargePropDecal.CenterOutsideBox");
+            AssertTrue(box.IntersectsOrientedRect(outsideCenter, new CoordXZ(6f, 0f), new CoordXZ(0f, 2f)),
+                "LargePropDecal.EdgeClipsInsideBox");
+            AssertTrue(!box.IntersectsOrientedRect(outsideCenter, new CoordXZ(3f, 0f), new CoordXZ(0f, 2f)),
+                "LargePropDecal.NonIntersectingRemainsExcluded");
         }
     }
 }

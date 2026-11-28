@@ -242,6 +242,12 @@ namespace MarqueeDelete
             };
         }
 
+        public static bool ShouldAllowOwnedSafeArea(SelectionFilterMask mask)
+        {
+            return (mask & SelectionFilterMask.Areas) != 0 &&
+                   (mask & (SelectionFilterMask.Buildings | SelectionFilterMask.AllZones)) == 0;
+        }
+
         public static NetworkSubKind ClassifyNetworkByPrefabFlags(
             bool hasRoadOrPathwayData,
             bool hasTrackData,
@@ -353,6 +359,12 @@ namespace MarqueeDelete
                 return IsMaskEnabledForCategory(mask, category)
                     ? FilterSkipReason.Accepted
                     : FilterSkipReason.FilteredOutByCategory;
+            }
+
+            if (s.IsSafeArea && s.HasOwner && ShouldAllowOwnedSafeArea(mask))
+            {
+                category = SelectionCategory.Area;
+                return FilterSkipReason.Accepted;
             }
 
             if (s.HasOwner)

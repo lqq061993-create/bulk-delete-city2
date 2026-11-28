@@ -79,9 +79,10 @@ internal static class HarnessProgram
         Run("scenario 38 (global undo Combine skips shrinking when later road attaches to far node)", ScenarioGlobalUndoCombineTopologySafetyGuard);
         Run("scenario 39 (global undo Combine into pre-existing intersection falls back to Delete+Rebuild)", ScenarioGlobalUndoCombineExistingIntersectionFallback);
         Run("scenario 40 (global undo Node Replace remaps adjacent endpoints and replay refuses unrelated Edge rewiring)", ScenarioGlobalUndoNodeReplaceRemapAndRewireGuard);
+        Run("scenario 41 (global undo Build->Bulldoze->Undo Bulldoze->Undo Build resolves rebuilt entity uniquely)", ScenarioGlobalUndoRebuiltCreatedEntityResolution);
 
         Console.WriteLine(s_Failures == 0
-            ? "Undo harness: 40 scenarios, " + s_Checks + " checks passed"
+            ? "Undo harness: 41 scenarios, " + s_Checks + " checks passed"
             : "Undo harness: " + s_Failures + " of " + s_Checks + " checks failed");
         return s_Failures == 0 ? 0 : 1;
     }
@@ -3371,5 +3372,175 @@ internal static class HarnessProgram
             "scenario 40: replay refuses to rewire comb2 back to unrelated node a2");
         Check(math.distancesq(em2.GetComponentData<Game.Net.Node>(c2).m_Position, new float3(200f, 0f, 0f)) < 1e-4f,
             "scenario 40: node c2 NOT moved when comb2 endpoints changed externally");
+    }
+
+    private static void ScenarioGlobalUndoRebuiltCreatedEntityResolution()
+    {
+        // Part A: Build B_orig -> Bulldoze B_orig -> Undo Bulldoze (spawns B_rebuilt) -> Undo Build (deletes B_rebuilt)
+        var em = new EntityManager();
+        var globalUndo = new GlobalUndoManager();
+        var delUndo = new DeletionUndoManager();
+        var terrainSys = new Game.Simulation.TerrainSystem();
+        var toolSys = new Game.Tools.ToolSystem { activeTool = new Game.Tools.ToolBaseSystem { toolID = "Object Tool" } };
+        CreateGlobalUndoQueries(em, out var tempQ, out var zoneQ, out var brushQ, out var createdQ);
+
+        Entity bldPrefab = MakeObjectPrefab(em, 5100);
+        float3 pos = new float3(50f, 0f, 20f);
+
+        // 1. Build B_orig
+        Entity bOrig = em.Make(400);
+        em.AddComponentData(bOrig, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bOrig, new Game.Objects.Object());
+        em.AddComponentData(bOrig, new Game.Buildings.Building());
+        em.AddComponentData(bOrig, new Game.Objects.Transform { m_Position = pos, m_Rotation = quaternion.identity });
+        em.AddComponentData(bOrig, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        UnityEngine.Time.frameCount = 2000;
+        globalUndo.OnPreApply(em, toolSys, terrainSys, delUndo, tempQ, zoneQ, brushQ);
+
+        em.RemoveComponent<Game.Tools.Temp>(bOrig);
+        em.AddComponentData(bOrig, new Game.Common.Created());
+        em.AddComponentData(bOrig, new Game.Common.Applied());
+
+        globalUndo.OnPostApply(em, createdQ);
+        globalUndo.FlushOpenStroke();
+
+        em.RemoveComponent<Game.Common.Created>(bOrig);
+        em.RemoveComponent<Game.Common.Applied>(bOrig);
+
+        GlobalUndoTransaction txBuild = globalUndo.PeekTopTransaction();
+        Check(txBuild != null && txBuild.Kind == GlobalUndoActionKind.Build &&
+              txBuild.CreatedEntities.Count == 1 && txBuild.CreatedEntities[0].Entity == bOrig,
+            "scenario 41: Build transaction records B_orig");
+
+        // 2. Bulldoze B_orig
+        toolSys.activeTool.toolID = "Bulldoze Tool";
+        Entity tempDel = em.Make(401);
+        em.AddComponentData(tempDel, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(tempDel, new Game.Objects.Object());
+        em.AddComponentData(tempDel, new Game.Buildings.Building());
+        em.AddComponentData(tempDel, new Game.Objects.Transform { m_Position = pos, m_Rotation = quaternion.identity });
+        em.AddComponentData(tempDel, new Game.Tools.Temp { m_Original = bOrig, m_Flags = Game.Tools.TempFlags.Delete });
+
+        UnityEngine.Time.frameCount = 2010;
+        globalUndo.OnPreApply(em, toolSys, terrainSys, delUndo, tempQ, zoneQ, brushQ);
+
+        em.DestroyEntity(tempDel);
+        em.DestroyEntity(bOrig);
+
+        globalUndo.OnPostApply(em, createdQ);
+        globalUndo.FlushOpenStroke();
+
+        GlobalUndoTransaction txBulldoze = globalUndo.PeekTopTransaction();
+        Check(txBulldoze != null && txBulldoze.Kind == GlobalUndoActionKind.Bulldoze && txBulldoze.DeletedCount == 1,
+            "scenario 41: Bulldoze transaction captures B_orig");
+
+        // 3. Undo #1: Undo Bulldoze -> emits CreationDefinition -> spawns new B_rebuilt at same (Prefab, Position)
+        var creations = new List<Game.Tools.CreationDefinition>();
+        Check(globalUndo.StartOrResumeUndo(UndoAssetMask.All, delUndo), "scenario 41: Undo #1 starts");
+        ReplayGlobalUndoToCompletion(em, globalUndo, delUndo, terrainSys, creations);
+        Check(creations.Count == 1 && creations[0].m_Prefab == bldPrefab,
+            "scenario 41: Undo #1 emits CreationDefinition for B_orig");
+
+        Entity bRebuilt = em.Make(402);
+        em.AddComponentData(bRebuilt, new Game.Prefabs.PrefabRef { m_Prefab = bldPrefab });
+        em.AddComponentData(bRebuilt, new Game.Objects.Object());
+        em.AddComponentData(bRebuilt, new Game.Buildings.Building());
+        em.AddComponentData(bRebuilt, new Game.Objects.Transform { m_Position = pos, m_Rotation = quaternion.identity });
+
+        // 4. Undo #2: Undo Build -> resolves B_rebuilt and deletes it with skipped == 0
+        Check(globalUndo.StartOrResumeUndo(UndoAssetMask.All, delUndo), "scenario 41: Undo #2 starts");
+        ReplayGlobalUndoToCompletion(em, globalUndo, delUndo, terrainSys);
+
+        Check(em.HasComponent<Game.Common.Deleted>(bRebuilt),
+            "scenario 41: Undo #2 resolves and deletes B_rebuilt");
+        SelectiveUndoUiSnapshot ui1 = globalUndo.GetSelectiveUiSnapshot(UndoAssetMask.All, delUndo);
+        Check(ui1.FinishedSkippedCount == 0 && ui1.FinishedRestoredCount == 1 && ui1.FinishedNotice == "UndoSubmitted",
+            "scenario 41: Undo #2 reports skipped == 0 and restored == 1");
+
+        // Part B: Negative test — un-rebuilt B_orig2 skips cleanly without deleting unrelated building
+        var em2 = new EntityManager();
+        var gu2 = new GlobalUndoManager();
+        var du2 = new DeletionUndoManager();
+        CreateGlobalUndoQueries(em2, out var tq2, out var zq2, out var bq2, out var cq2);
+        toolSys.activeTool.toolID = "Object Tool";
+
+        Entity prefab2 = MakeObjectPrefab(em2, 5100);
+        Entity bOrig2 = em2.Make(500);
+        em2.AddComponentData(bOrig2, new Game.Prefabs.PrefabRef { m_Prefab = prefab2 });
+        em2.AddComponentData(bOrig2, new Game.Objects.Object());
+        em2.AddComponentData(bOrig2, new Game.Buildings.Building());
+        em2.AddComponentData(bOrig2, new Game.Objects.Transform { m_Position = new float3(100f, 0f, 20f), m_Rotation = quaternion.identity });
+        em2.AddComponentData(bOrig2, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        // Unrelated building with same prefab at a different location (200, 0, 20)
+        Entity bUnrelated = em2.Make(501);
+        em2.AddComponentData(bUnrelated, new Game.Prefabs.PrefabRef { m_Prefab = prefab2 });
+        em2.AddComponentData(bUnrelated, new Game.Objects.Object());
+        em2.AddComponentData(bUnrelated, new Game.Buildings.Building());
+        em2.AddComponentData(bUnrelated, new Game.Objects.Transform { m_Position = new float3(200f, 0f, 20f), m_Rotation = quaternion.identity });
+
+        UnityEngine.Time.frameCount = 2100;
+        gu2.OnPreApply(em2, toolSys, terrainSys, du2, tq2, zq2, bq2);
+        em2.RemoveComponent<Game.Tools.Temp>(bOrig2);
+        em2.AddComponentData(bOrig2, new Game.Common.Created());
+        em2.AddComponentData(bOrig2, new Game.Common.Applied());
+        gu2.OnPostApply(em2, cq2);
+        gu2.FlushOpenStroke();
+        em2.RemoveComponent<Game.Common.Created>(bOrig2);
+        em2.RemoveComponent<Game.Common.Applied>(bOrig2);
+
+        // Destroy bOrig2 without rebuilding it
+        em2.DestroyEntity(bOrig2);
+
+        Check(gu2.StartOrResumeUndo(UndoAssetMask.All, du2), "scenario 41 (negative): undo starts");
+        ReplayGlobalUndoToCompletion(em2, gu2, du2, terrainSys);
+
+        Check(!em2.HasComponent<Game.Common.Deleted>(bUnrelated),
+            "scenario 41 (negative): unrelated building is NOT deleted");
+        SelectiveUndoUiSnapshot ui2 = gu2.GetSelectiveUiSnapshot(UndoAssetMask.All, du2);
+        Check(ui2.FinishedSkippedCount == 1 && ui2.FinishedNotice == "UndoSubmittedPartial",
+            "scenario 41 (negative): missing un-rebuilt entity skips cleanly");
+
+        // Part C: Uniqueness guard — two same-prefab candidates at the same position refuse ambiguous match
+        var em3 = new EntityManager();
+        var gu3 = new GlobalUndoManager();
+        var du3 = new DeletionUndoManager();
+        CreateGlobalUndoQueries(em3, out var tq3, out var zq3, out var bq3, out var cq3);
+
+        Entity prefab3 = MakeObjectPrefab(em3, 5100);
+        float3 ambPos = new float3(300f, 0f, 20f);
+        Entity bOrig3 = em3.Make(600);
+        em3.AddComponentData(bOrig3, new Game.Prefabs.PrefabRef { m_Prefab = prefab3 });
+        em3.AddComponentData(bOrig3, new Game.Objects.Transform { m_Position = ambPos, m_Rotation = quaternion.identity });
+        em3.AddComponentData(bOrig3, new Game.Objects.Object());
+        em3.AddComponentData(bOrig3, new Game.Buildings.Building());
+        em3.AddComponentData(bOrig3, new Game.Tools.Temp { m_Original = Entity.Null, m_Flags = Game.Tools.TempFlags.Create });
+
+        UnityEngine.Time.frameCount = 2200;
+        gu3.OnPreApply(em3, toolSys, terrainSys, du3, tq3, zq3, bq3);
+        em3.RemoveComponent<Game.Tools.Temp>(bOrig3);
+        em3.AddComponentData(bOrig3, new Game.Common.Created());
+        em3.AddComponentData(bOrig3, new Game.Common.Applied());
+        gu3.OnPostApply(em3, cq3);
+        gu3.FlushOpenStroke();
+        em3.RemoveComponent<Game.Common.Created>(bOrig3);
+        em3.RemoveComponent<Game.Common.Applied>(bOrig3);
+        em3.DestroyEntity(bOrig3);
+
+        Entity amb1 = em3.Make(601);
+        em3.AddComponentData(amb1, new Game.Prefabs.PrefabRef { m_Prefab = prefab3 });
+        em3.AddComponentData(amb1, new Game.Objects.Transform { m_Position = ambPos, m_Rotation = quaternion.identity });
+        Entity amb2 = em3.Make(602);
+        em3.AddComponentData(amb2, new Game.Prefabs.PrefabRef { m_Prefab = prefab3 });
+        em3.AddComponentData(amb2, new Game.Objects.Transform { m_Position = ambPos, m_Rotation = quaternion.identity });
+
+        Check(gu3.StartOrResumeUndo(UndoAssetMask.All, du3), "scenario 41 (ambiguous): undo starts");
+        ReplayGlobalUndoToCompletion(em3, gu3, du3, terrainSys);
+
+        Check(!em3.HasComponent<Game.Common.Deleted>(amb1) && !em3.HasComponent<Game.Common.Deleted>(amb2),
+            "scenario 41 (ambiguous): uniqueness guard deletes neither candidate when 2 match");
+        SelectiveUndoUiSnapshot ui3 = gu3.GetSelectiveUiSnapshot(UndoAssetMask.All, du3);
+        Check(ui3.FinishedSkippedCount == 1, "scenario 41 (ambiguous): reports skipped == 1");
     }
 }

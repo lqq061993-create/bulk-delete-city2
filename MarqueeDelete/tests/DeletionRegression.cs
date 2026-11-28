@@ -52,7 +52,7 @@ namespace Unity.Entities
 namespace Game.Common { public struct Deleted {} public struct Updated {} public struct Applied {} public struct Created {} public struct Owner { public Entity m_Owner; } }
 namespace Game.Net { public struct Node {} public struct Edge { public Entity m_Start, m_End; } public struct ConnectedEdge { public Entity m_Edge; } public struct SubNet { public Entity m_SubNet; } public struct SubLane { public Entity m_SubLane; } }
 namespace Game.Objects { public struct Moving {} public struct Attached { public Entity m_Parent; } public struct SubObject { public Entity m_SubObject; } }
-namespace Game.Areas { public struct SubArea { public Entity m_Area; } }
+namespace Game.Areas { public struct Area {} public struct SubArea { public Entity m_Area; } }
 namespace Game.Buildings { public struct InstalledUpgrade { public Entity m_Upgrade; } }
 namespace Game.Routes { public struct SubRoute { public Entity m_Route; } public struct Route {} }
 namespace Game.Creatures { public struct Creature {} }
@@ -1131,6 +1131,104 @@ class DeletionRegression
               fullTickUndoBody.Contains("isLeftHandTraffic") &&
               globalUndoSource.Contains("deletionUndo.Step(em, barrier.CreateCommandBuffer(), terrainSystem, waterSystem, isLeftHandTraffic, out bool delCompleted)"),
             "Terrain, water, and LHT context is threaded from MarqueeDeleteToolSystem through GlobalUndo into DeletionUndo.Step");
+
+        // --- Owned Area deletion refreshes parent without deleting parent ---
+        var areaEm = new EntityManager();
+        var parkBld = areaEm.Make(501);
+        var ownedSurface = areaEm.Make(502);
+        var otherSurface = areaEm.Make(503);
+        areaEm.Set(ownedSurface, new Game.Areas.Area());
+        areaEm.Set(ownedSurface, new Owner { m_Owner = parkBld });
+        areaEm.Set(otherSurface, new Game.Areas.Area());
+        areaEm.Set(otherSurface, new Owner { m_Owner = parkBld });
+        areaEm.Buffer(parkBld, new Game.Areas.SubArea { m_Area = ownedSurface }, new Game.Areas.SubArea { m_Area = otherSurface });
+
+        var areaPlan = Cascade.Plan(areaEm, new[] { ownedSurface });
+        Check(areaPlan.Submitted.SetEquals(new[] { ownedSurface }),
+            "Deleting an owned Surface submits only the Surface and not its parent building");
+        Check(!areaPlan.Affected.Contains(parkBld) && !areaPlan.Affected.Contains(otherSurface),
+            "Deleting an owned Surface does not cascade-delete its parent building or sibling SubAreas");
+        Check(areaPlan.Neighbors.Contains(parkBld),
+            "Deleting an owned Surface adds its live parent building to Neighbors so it updates");
+
+        var areaCmds = new EntityCommandBuffer();
+        Cascade.Submit(areaEm, areaCmds, areaPlan, out int areaUpdated);
+        Check(areaCmds.Deleted.SetEquals(new[] { ownedSurface }) && areaCmds.Updated.Contains(parkBld) && areaUpdated == 1,
+            "Cascade.Submit deletes owned Surface and marks parent building Updated");
+
+        var areaCulled = new HashSet<Entity>();
+        var areaExcludedPlan = Cascade.PlanExcluding(areaEm, new List<Entity> { ownedSurface }, new HashSet<Entity> { parkBld }, areaCulled);
+        Check(areaCulled.Count == 0 && areaExcludedPlan.Submitted.Contains(ownedSurface) && areaExcludedPlan.Neighbors.Contains(parkBld),
+            "PlanExcluding keeps owned Surface when parent building is excluded because parent is only Updated");
+
+        var deadOwnerSurface = areaEm.Make(504);
+        var deadParent = areaEm.Make(505);
+        areaEm.Set(deadParent, new Deleted());
+        areaEm.Set(deadOwnerSurface, new Game.Areas.Area());
+        areaEm.Set(deadOwnerSurface, new Owner { m_Owner = deadParent });
+        var deadOwnerPlan = Cascade.Plan(areaEm, new[] { deadOwnerSurface });
+        Check(!deadOwnerPlan.Neighbors.Contains(deadParent),
+            "Deleted parent building is not added to Neighbors");
+
+        // --- Selection.cs & SelectionLogic.cs guards for moving, underground, owned areas, and large props/decals ---
+        string selectionSource = ReadSource("Selection.cs");
+        string selectionLogicSource = ReadSource("SelectionLogic.cs");
+        Check(selectionSource.Length > 0 && selectionLogicSource.Length > 0,
+            "Selection sources are reachable from the regression run");
+        Check(selectionLogicSource.Contains("public static bool ShouldAllowOwnedSafeArea(SelectionFilterMask mask)"),
+            "SelectionLogic defines ShouldAllowOwnedSafeArea");
+
+        string collectBody = MethodBody(selectionSource, "public static SelectionResult Collect(", 10000);
+        Check(collectBody.Contains("ComponentType.ReadOnly<Vehicle>()") &&
+              collectBody.Contains("ComponentType.ReadOnly<Creature>()") &&
+              collectBody.Contains("ComponentType.ReadOnly<Moving>()") &&
+              collectBody.Contains("ComponentType.ReadOnly<Unspawned>()") &&
+              collectBody.Contains("query.Dispose()") &&
+              collectBody.Contains("ResolvePickRoot(em, e)"),
+            "Collect runs EntityQuery fallback for Moving/Vehicle/Creature (excluding Unspawned) and normalizes Controller roots");
+
+        string entityIterBody = MethodBody(selectionSource, "private struct EntityTreeIterator", 4500);
+        Check(entityIterBody.Contains("IsMovingEntity(m_EntityManager, item)") &&
+              entityIterBody.Contains("ResolvePickRoot(m_EntityManager, item)"),
+            "EntityTreeIterator normalizes moving Controller roots before deduplication");
+
+        string undergroundBody = MethodBody(selectionSource, "private static bool IsEntityUnderground(", 4500);
+        Check(undergroundBody.Contains("TryGetMovingLaneEntity(") &&
+              undergroundBody.Contains("HasTunnelComposition(") &&
+              undergroundBody.Contains("hasNetAuthoritativeOwner") &&
+              undergroundBody.Contains("terrainY - 6.0f") &&
+              !undergroundBody.Contains("terrainY - 2.25f"),
+            "IsEntityUnderground checks net-owned lane tunnel composition before -6.0m terrain fallback");
+
+        string filterSimilarBody = MethodBody(selectionSource, "internal static SelectionResult FilterPendingBySimilarEntity(", 1500);
+        Check(filterSimilarBody.Contains("current.Entities.Contains(pickedEntity)") &&
+              filterSimilarBody.Contains("ResolvePickRoot(em, pickedEntity, mask)"),
+            "FilterPendingBySimilarEntity preserves owned SafeArea targets via mask/selection check");
+
+        string snapshotBody = MethodBody(selectionSource, "private static EntityFlagsSnapshot BuildSnapshot(", 4500);
+        Check(snapshotBody.Contains("bool isSafeArea =") &&
+              snapshotBody.Contains("&& !isSafeArea"),
+            "BuildSnapshot exempts Lot/Surface/Space from IsTerrain even when Game.Areas.Terrain is present");
+
+        string areaIterBody = MethodBody(selectionSource, "private struct AreaTreeIterator", 4500);
+        Check(!areaIterBody.Contains("if (m_EntityManager.HasComponent<Owner>(area))") &&
+              areaIterBody.Contains("HasComponent<MapTile>(area)") &&
+              areaIterBody.Contains("HasComponent<District>(area)"),
+            "AreaTreeIterator delegates Owner evaluation to SelectionClassifier while keeping MapTile/District guard");
+
+        string addSingleBody = MethodBody(selectionSource, "internal static SelectionResult AddSingleEntity(", 1000);
+        Check(addSingleBody.Contains("ResolvePickRoot(em, pickedEntity, mask)") &&
+              selectionSource.Contains("ShouldAllowOwnedSafeArea(mask)"),
+            "AddSingleEntity passes mask into ResolvePickRoot to allow picking owned safe areas directly");
+
+        string preRejectBody = MethodBody(selectionSource, "private static bool TryPreRejectEntity(", 3500);
+        string matchGeomBody = MethodBody(selectionSource, "private static bool MatchesEntityGeometry(", 4000);
+        Check(matchGeomBody.Contains("ObjectGeometryData") &&
+              matchGeomBody.Contains("ObjectUtils.GetBounds(") &&
+              matchGeomBody.Contains("IntersectsOrientedRect") &&
+              preRejectBody.Contains("HasComponent<Unspawned>(item)") &&
+              !MethodBody(preRejectBody, "if (!isNetTree && !isBuilding)", 600).Contains("ContainsPoint"),
+            "Decals and large props skip premature center-point rejection and use ObjectGeometryData bounds oriented rect intersection");
 
         Console.WriteLine($"Deletion regression: {checks} passed (offline stand-ins; in-game playback still requires validation).");
     }

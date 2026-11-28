@@ -15,6 +15,7 @@ using Game.Simulation;
 using Game.Tools;
 using Game.Vehicles;
 using Game.Zones;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
 using Unity.Mathematics;
@@ -348,35 +349,125 @@ namespace MarqueeDelete
                 hasTerrainData = terrainData.isCreated;
             }
 
-            Game.Objects.SearchSystem objectSearch = (needStaticTree || needMovingTree)
-                ? world.GetExistingSystemManaged<Game.Objects.SearchSystem>()
-                : null;
-
-            if (objectSearch != null && needStaticTree)
+            try
             {
-                NativeQuadTree<Entity, QuadTreeBoundsXZ> tree = objectSearch.GetStaticSearchTree(true, out JobHandle deps);
-                deps.Complete();
-                EntityTreeIterator iterator = new EntityTreeIterator(
-                    em, shape, mask, safety, seen, result, isNetTree: false,
-                    undergroundView: undergroundView, hasTerrainData: hasTerrainData, terrainData: terrainData);
-                tree.Iterate(ref iterator);
-                objectSearch.AddStaticSearchTreeReader(default(JobHandle));
+                Game.Objects.SearchSystem objectSearch = (needStaticTree || needMovingTree)
+                    ? world.GetExistingSystemManaged<Game.Objects.SearchSystem>()
+                    : null;
+
+                if (objectSearch != null && needStaticTree)
+                {
+                    NativeQuadTree<Entity, QuadTreeBoundsXZ> tree = objectSearch.GetStaticSearchTree(true, out JobHandle deps);
+                    deps.Complete();
+                    EntityTreeIterator iterator = new EntityTreeIterator(
+                        em, shape, mask, safety, seen, result, isNetTree: false,
+                        undergroundView: undergroundView, hasTerrainData: hasTerrainData, terrainData: terrainData);
+                    tree.Iterate(ref iterator);
+                    objectSearch.AddStaticSearchTreeReader(default(JobHandle));
+                }
+
+                if (objectSearch != null && needMovingTree)
+                {
+                    NativeQuadTree<Entity, QuadTreeBoundsXZ> tree = objectSearch.GetMovingSearchTree(true, out JobHandle deps);
+                    deps.Complete();
+                    EntityTreeIterator iterator = new EntityTreeIterator(
+                        em, shape, mask, safety, seen, result, isNetTree: false,
+                        undergroundView: undergroundView, hasTerrainData: hasTerrainData, terrainData: terrainData);
+                    tree.Iterate(ref iterator);
+                    objectSearch.AddMovingSearchTreeReader(default(JobHandle));
+                }
+
+                // Fallback query captures parked/stopped vehicles (ParkedCar, ParkedTrain, Stopped)
+                // and idle/queued pedestrians not indexed in MovingSearchTree.
+                if (needMovingTree)
+                {
+                    EntityQuery query = em.CreateEntityQuery(new EntityQueryDesc
+                    {
+                        Any = new[]
+                        {
+                            ComponentType.ReadOnly<Vehicle>(),
+                            ComponentType.ReadOnly<Creature>(),
+                            ComponentType.ReadOnly<Moving>(),
+                        },
+                        None = new[]
+                        {
+                            ComponentType.ReadOnly<Deleted>(),
+                            ComponentType.ReadOnly<Temp>(),
+                            ComponentType.ReadOnly<Hidden>(),
+                            ComponentType.ReadOnly<Overridden>(),
+                            ComponentType.ReadOnly<Unspawned>(),
+                        },
+                    });
+                    try
+                    {
+                        using (NativeArray<Entity> entities = query.ToEntityArray(Allocator.Temp))
+                        {
+                            for (int i = 0; i < entities.Length; i++)
+                            {
+                                Entity e = entities[i];
+                                if (e == Entity.Null || !em.Exists(e) || !em.HasComponent<Transform>(e))
+                                {
+                                    continue;
+                                }
+
+                                float3 pos = em.GetComponentData<Transform>(e).m_Position;
+                                if (!shape.ContainsPoint(new CoordXZ(pos.x, pos.z)))
+                                {
+                                    continue;
+                                }
+
+                                Entity root = ResolvePickRoot(em, e);
+                                if (root == Entity.Null || !em.Exists(root))
+                                {
+                                    continue;
+                                }
+
+                                if (!seen.Add(root))
+                                {
+                                    continue;
+                                }
+
+                                result.RawHits++;
+
+                                if (TryPreRejectEntity(
+                                    em,
+                                    root,
+                                    in shape,
+                                    mask,
+                                    in safety,
+                                    isNetTree: false))
+                                {
+                                    continue;
+                                }
+
+                                EntityFlagsSnapshot snap = BuildSnapshot(em, root, hasTerrainData, ref terrainData);
+                                FilterSkipReason reason = SelectionClassifier.Evaluate(in snap, mask, in safety, undergroundView, out SelectionCategory category);
+                                if (reason != FilterSkipReason.Accepted)
+                                {
+                                    continue;
+                                }
+
+                                if (!MatchesEntityGeometry(em, root, in shape, default(QuadTreeBoundsXZ), in snap))
+                                {
+                                    continue;
+                                }
+
+                                AddItem(em, result, root, category, in snap);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        query.Dispose();
+                    }
+                }
             }
-
-            if (objectSearch != null && needMovingTree)
+            finally
             {
-                NativeQuadTree<Entity, QuadTreeBoundsXZ> tree = objectSearch.GetMovingSearchTree(true, out JobHandle deps);
-                deps.Complete();
-                EntityTreeIterator iterator = new EntityTreeIterator(
-                    em, shape, mask, safety, seen, result, isNetTree: false,
-                    undergroundView: undergroundView, hasTerrainData: hasTerrainData, terrainData: terrainData);
-                tree.Iterate(ref iterator);
-                objectSearch.AddMovingSearchTreeReader(default(JobHandle));
-            }
-
-            if (terrainSystem != null && needMovingTree)
-            {
-                terrainSystem.AddCPUHeightReader(default(JobHandle));
+                if (terrainSystem != null && needMovingTree)
+                {
+                    terrainSystem.AddCPUHeightReader(default(JobHandle));
+                }
             }
 
             if (needNetTree)
@@ -573,11 +664,28 @@ namespace MarqueeDelete
             }
         }
 
-        internal static Entity ResolvePickRoot(EntityManager em, Entity picked)
+        private static bool IsSafeAreaEntity(EntityManager em, Entity entity) =>
+            (em.HasComponent<Game.Areas.Lot>(entity) ||
+             em.HasComponent<Game.Areas.Surface>(entity) ||
+             em.HasComponent<Space>(entity)) &&
+            !em.HasComponent<MapTile>(entity) &&
+            !em.HasComponent<District>(entity);
+
+        internal static Entity ResolvePickRoot(EntityManager em, Entity picked) =>
+            ResolvePickRoot(em, picked, SelectionFilterMask.None);
+
+        internal static Entity ResolvePickRoot(EntityManager em, Entity picked, SelectionFilterMask mask)
         {
             if (picked == Entity.Null || !em.Exists(picked))
             {
                 return Entity.Null;
+            }
+
+            if (SelectionClassifier.ShouldAllowOwnedSafeArea(mask) &&
+                !em.HasComponent<Deleted>(picked) &&
+                IsSafeAreaEntity(em, picked))
+            {
+                return picked;
             }
 
             Entity curr = picked;
@@ -711,7 +819,7 @@ namespace MarqueeDelete
             added = false;
             skipReason = FilterSkipReason.InvalidOrInactive;
 
-            Entity root = ResolvePickRoot(em, pickedEntity);
+            Entity root = ResolvePickRoot(em, pickedEntity, mask);
             if (root == Entity.Null || !em.Exists(root))
             {
                 return current;
@@ -830,7 +938,8 @@ namespace MarqueeDelete
             SelectionResult current,
             Entity pickedEntity,
             out MatchSimilarOutcome outcome,
-            out int matchedCount)
+            out int matchedCount,
+            SelectionFilterMask mask = SelectionFilterMask.None)
         {
             matchedCount = 0;
             if (current == null || current.Count == 0)
@@ -845,7 +954,9 @@ namespace MarqueeDelete
                 return current;
             }
 
-            Entity target = ResolvePickRoot(em, pickedEntity);
+            Entity target = current.Entities.Contains(pickedEntity)
+                ? pickedEntity
+                : ResolvePickRoot(em, pickedEntity, mask);
             if (target == Entity.Null || !em.Exists(target) || em.HasComponent<Deleted>(target))
             {
                 target = pickedEntity;
@@ -1102,6 +1213,10 @@ namespace MarqueeDelete
                 em.HasComponent<Creature>(entity);
 
             bool isUnderground = IsEntityUnderground(em, entity, isNetwork, isMoving, hasTerrainData, ref terrainData);
+            bool isSafeArea =
+                em.HasComponent<Game.Areas.Lot>(entity) ||
+                em.HasComponent<Game.Areas.Surface>(entity) ||
+                em.HasComponent<Space>(entity);
 
             return new EntityFlagsSnapshot
             {
@@ -1110,7 +1225,7 @@ namespace MarqueeDelete
                 IsHidden = em.HasComponent<Hidden>(entity),
                 IsTemp = em.HasComponent<Temp>(entity),
                 IsOverridden = em.HasComponent<Overridden>(entity),
-                IsTerrain = em.HasComponent<Game.Common.Terrain>(entity) || em.HasComponent<Game.Areas.Terrain>(entity),
+                IsTerrain = (em.HasComponent<Game.Common.Terrain>(entity) || em.HasComponent<Game.Areas.Terrain>(entity)) && !isSafeArea,
                 IsPlaceholder = em.HasComponent<Placeholder>(entity),
                 IsMarker = em.HasComponent<Game.Objects.Marker>(entity) || em.HasComponent<Game.Net.Marker>(entity),
 
@@ -1143,10 +1258,7 @@ namespace MarqueeDelete
                     em.HasComponent<AssetStamp>(entity),
 
                 IsNetwork = isNetwork,
-                IsSafeArea =
-                    em.HasComponent<Game.Areas.Lot>(entity) ||
-                    em.HasComponent<Game.Areas.Surface>(entity) ||
-                    em.HasComponent<Space>(entity),
+                IsSafeArea = isSafeArea,
                 IsUnderground = isUnderground,
             };
         }
@@ -1201,16 +1313,130 @@ namespace MarqueeDelete
                 }
             }
 
-            if (isMoving && hasTerrainData && em.HasComponent<Transform>(entity))
+            if (isMoving)
             {
-                float3 pos = em.GetComponentData<Transform>(entity).m_Position;
-                float terrainY = TerrainUtils.SampleHeight(ref terrainData, pos);
-                if (pos.y < terrainY - 2.25f)
+                if (TryGetMovingLaneEntity(em, entity, out Entity laneEntity))
                 {
-                    return true;
+                    if (HasTunnelComposition(em, laneEntity))
+                    {
+                        return true;
+                    }
+
+                    bool hasNetAuthoritativeOwner = false;
+                    if (em.HasComponent<Owner>(laneEntity))
+                    {
+                        Entity laneOwner = em.GetComponentData<Owner>(laneEntity).m_Owner;
+                        if (laneOwner != Entity.Null && em.Exists(laneOwner))
+                        {
+                            if (HasTunnelComposition(em, laneOwner) || HasConnectedTunnelEdge(em, laneOwner))
+                            {
+                                return true;
+                            }
+
+                            hasNetAuthoritativeOwner =
+                                em.HasComponent<Edge>(laneOwner) ||
+                                em.HasComponent<Game.Net.Node>(laneOwner) ||
+                                em.HasComponent<Composition>(laneOwner) ||
+                                em.HasComponent<Orphan>(laneOwner);
+                        }
+                    }
+
+                    if (hasNetAuthoritativeOwner)
+                    {
+                        return false;
+                    }
+                }
+
+                if (hasTerrainData && em.HasComponent<Transform>(entity))
+                {
+                    float3 pos = em.GetComponentData<Transform>(entity).m_Position;
+                    float terrainY = TerrainUtils.SampleHeight(ref terrainData, pos);
+                    if (pos.y < terrainY - 6.0f)
+                    {
+                        return true;
+                    }
                 }
             }
 
+            return false;
+        }
+
+        private static bool TryGetMovingLaneEntity(EntityManager em, Entity entity, out Entity laneEntity)
+        {
+            laneEntity = Entity.Null;
+            if (em.HasComponent<CarCurrentLane>(entity))
+            {
+                Entity lane = em.GetComponentData<CarCurrentLane>(entity).m_Lane;
+                if (lane != Entity.Null && em.Exists(lane))
+                {
+                    laneEntity = lane;
+                    return true;
+                }
+            }
+            if (em.HasComponent<ParkedCar>(entity))
+            {
+                Entity lane = em.GetComponentData<ParkedCar>(entity).m_Lane;
+                if (lane != Entity.Null && em.Exists(lane))
+                {
+                    laneEntity = lane;
+                    return true;
+                }
+            }
+            if (em.HasComponent<HumanCurrentLane>(entity))
+            {
+                Entity lane = em.GetComponentData<HumanCurrentLane>(entity).m_Lane;
+                if (lane != Entity.Null && em.Exists(lane))
+                {
+                    laneEntity = lane;
+                    return true;
+                }
+            }
+            if (em.HasComponent<AnimalCurrentLane>(entity))
+            {
+                Entity lane = em.GetComponentData<AnimalCurrentLane>(entity).m_Lane;
+                if (lane != Entity.Null && em.Exists(lane))
+                {
+                    laneEntity = lane;
+                    return true;
+                }
+            }
+            if (em.HasComponent<WatercraftCurrentLane>(entity))
+            {
+                Entity lane = em.GetComponentData<WatercraftCurrentLane>(entity).m_Lane;
+                if (lane != Entity.Null && em.Exists(lane))
+                {
+                    laneEntity = lane;
+                    return true;
+                }
+            }
+            if (em.HasComponent<TrainCurrentLane>(entity))
+            {
+                TrainCurrentLane tcl = em.GetComponentData<TrainCurrentLane>(entity);
+                if (tcl.m_Front.m_Lane != Entity.Null && em.Exists(tcl.m_Front.m_Lane))
+                {
+                    laneEntity = tcl.m_Front.m_Lane;
+                    return true;
+                }
+                if (tcl.m_Rear.m_Lane != Entity.Null && em.Exists(tcl.m_Rear.m_Lane))
+                {
+                    laneEntity = tcl.m_Rear.m_Lane;
+                    return true;
+                }
+            }
+            if (em.HasComponent<ParkedTrain>(entity))
+            {
+                ParkedTrain pt = em.GetComponentData<ParkedTrain>(entity);
+                if (pt.m_FrontLane != Entity.Null && em.Exists(pt.m_FrontLane))
+                {
+                    laneEntity = pt.m_FrontLane;
+                    return true;
+                }
+                if (pt.m_RearLane != Entity.Null && em.Exists(pt.m_RearLane))
+                {
+                    laneEntity = pt.m_RearLane;
+                    return true;
+                }
+            }
             return false;
         }
 
@@ -1401,7 +1627,7 @@ namespace MarqueeDelete
                 em.HasComponent<Temp>(item) ||
                 em.HasComponent<Overridden>(item) ||
                 em.HasComponent<Game.Common.Terrain>(item) ||
-                em.HasComponent<Game.Areas.Terrain>(item) ||
+                (em.HasComponent<Game.Areas.Terrain>(item) && !IsSafeAreaEntity(em, item)) ||
                 em.HasComponent<Placeholder>(item) ||
                 em.HasComponent<Game.Objects.Marker>(item) ||
                 em.HasComponent<Game.Net.Marker>(item))
@@ -1421,7 +1647,7 @@ namespace MarqueeDelete
 
             if (!isNetTree && (em.HasComponent<Moving>(item) || em.HasComponent<Vehicle>(item) || em.HasComponent<Creature>(item)))
             {
-                if ((mask & SelectionFilterMask.Moving) == 0)
+                if ((mask & SelectionFilterMask.Moving) == 0 || em.HasComponent<Unspawned>(item))
                 {
                     return true;
                 }
@@ -1451,15 +1677,6 @@ namespace MarqueeDelete
 
             if (!isNetTree && !isBuilding)
             {
-                if (em.HasComponent<Transform>(item))
-                {
-                    float3 pos = em.GetComponentData<Transform>(item).m_Position;
-                    if (!shape.ContainsPoint(new CoordXZ(pos.x, pos.z)))
-                    {
-                        return true;
-                    }
-                }
-
                 if ((mask & SelectionFilterMask.Trees) == 0 &&
                     (em.HasComponent<Plant>(item) || em.HasComponent<Game.Objects.Tree>(item)) &&
                     !em.HasComponent<Pillar>(item))
@@ -1510,6 +1727,40 @@ namespace MarqueeDelete
                         new CoordXZ(pos.x, pos.z),
                         new CoordXZ(rx.x, rx.z),
                         new CoordXZ(rz.x, rz.z));
+                }
+
+                if (!snap.IsBuilding && !snap.IsNetwork && !snap.IsMoving && !snap.IsSafeArea && !snap.IsPlant &&
+                    em.HasComponent<PrefabRef>(entity))
+                {
+                    Entity prefab = em.GetComponentData<PrefabRef>(entity).m_Prefab;
+                    if (prefab != Entity.Null && em.Exists(prefab) && em.HasComponent<ObjectGeometryData>(prefab))
+                    {
+                        ObjectGeometryData ogd = em.GetComponentData<ObjectGeometryData>(prefab);
+                        float3 sz = ogd.m_Size;
+                        if (math.all(math.isfinite(sz)) && sz.x >= 0f && sz.z >= 0f && math.max(sz.x, sz.z) > 1.0f)
+                        {
+                            Bounds3 localBounds = ObjectUtils.GetBounds(ogd);
+                            float3 centerPos = pos;
+                            float halfW = sz.x * 0.5f;
+                            float halfD = sz.z * 0.5f;
+                            if (math.all(math.isfinite(localBounds.min)) &&
+                                math.all(math.isfinite(localBounds.max)) &&
+                                localBounds.max.x >= localBounds.min.x &&
+                                localBounds.max.z >= localBounds.min.z)
+                            {
+                                float3 localCenter = (localBounds.min + localBounds.max) * 0.5f;
+                                centerPos += math.mul(t.m_Rotation, new float3(localCenter.x, 0f, localCenter.z));
+                                halfW = (localBounds.max.x - localBounds.min.x) * 0.5f;
+                                halfD = (localBounds.max.z - localBounds.min.z) * 0.5f;
+                            }
+                            float3 rx = math.mul(t.m_Rotation, new float3(halfW, 0f, 0f));
+                            float3 rz = math.mul(t.m_Rotation, new float3(0f, 0f, halfD));
+                            return shape.IntersectsOrientedRect(
+                                new CoordXZ(centerPos.x, centerPos.z),
+                                new CoordXZ(rx.x, rx.z),
+                                new CoordXZ(rz.x, rz.z));
+                        }
+                    }
                 }
 
                 return shape.ContainsPoint(new CoordXZ(pos.x, pos.z));
@@ -1616,6 +1867,15 @@ namespace MarqueeDelete
                     return;
                 }
 
+                if (!m_IsNetTree && IsMovingEntity(m_EntityManager, item))
+                {
+                    item = ResolvePickRoot(m_EntityManager, item);
+                    if (item == Entity.Null)
+                    {
+                        return;
+                    }
+                }
+
                 if (!m_Seen.Add(item))
                 {
                     return;
@@ -1703,12 +1963,6 @@ namespace MarqueeDelete
                 }
 
                 if (m_EntityManager.HasComponent<MapTile>(area) || m_EntityManager.HasComponent<District>(area))
-                {
-                    m_Seen.Add(area);
-                    return;
-                }
-
-                if (m_EntityManager.HasComponent<Owner>(area))
                 {
                     m_Seen.Add(area);
                     return;

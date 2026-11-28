@@ -369,6 +369,15 @@ namespace MarqueeDelete
                 }
                 if (em.HasComponent<Attached>(entity))
                     toUpdate.Add(em.GetComponentData<Attached>(entity).m_Parent);
+                if (em.HasComponent<Game.Areas.Area>(entity) && em.HasComponent<Owner>(entity))
+                {
+                    Entity areaOwner = em.GetComponentData<Owner>(entity).m_Owner;
+                    if (areaOwner != Entity.Null && em.Exists(areaOwner) &&
+                        !em.HasComponent<Deleted>(areaOwner) && !submitted.Contains(areaOwner))
+                    {
+                        toUpdate.Add(areaOwner);
+                    }
+                }
             }
             var neighbors = EntityOrder.Sorted(nodesToScan);
             foreach (Entity node in neighbors)

@@ -2376,6 +2376,112 @@ namespace MarqueeDelete
                    em.HasComponent<Game.Objects.WaterPipeOutsideConnection>(entity);
         }
 
+        private static bool TryResolveRebuiltCreatedEntity(
+            EntityManager em,
+            in CreatedEntityRecord rec,
+            HashSet<Entity> resolvedClaimed,
+            out Entity resolved)
+        {
+            resolved = Entity.Null;
+            if (rec.Prefab == Entity.Null || !em.Exists(rec.Prefab))
+            {
+                return false;
+            }
+
+            EntityQuery query = em.CreateEntityQuery(new EntityQueryDesc
+            {
+                All = new[] { ComponentType.ReadOnly<PrefabRef>() },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<Deleted>(),
+                    ComponentType.ReadOnly<Temp>(),
+                    ComponentType.ReadOnly<Vehicle>(),
+                    ComponentType.ReadOnly<Creature>(),
+                    ComponentType.ReadOnly<Moving>(),
+                    ComponentType.ReadOnly<Lane>(),
+                },
+            });
+
+            int matchCount = 0;
+            Entity matched = Entity.Null;
+            try
+            {
+                using (NativeArray<Entity> candidates = query.ToEntityArray(Allocator.Temp))
+                {
+                    const float maxDistSq = 0.5f * 0.5f;
+                    for (int i = 0; i < candidates.Length; i++)
+                    {
+                        Entity cand = candidates[i];
+                        if (cand == Entity.Null || !em.Exists(cand) ||
+                            (resolvedClaimed != null && resolvedClaimed.Contains(cand)) ||
+                            IsHardProtected(em, cand))
+                        {
+                            continue;
+                        }
+
+                        if (em.GetComponentData<PrefabRef>(cand).m_Prefab != rec.Prefab)
+                        {
+                            continue;
+                        }
+
+                        if (!rec.HasOwner)
+                        {
+                            if (em.HasComponent<Owner>(cand))
+                            {
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            if (!em.HasComponent<Owner>(cand) ||
+                                em.GetComponentData<Owner>(cand).m_Owner != rec.OwnerEntity)
+                            {
+                                continue;
+                            }
+                        }
+
+                        float3 candPos;
+                        if (em.HasComponent<Game.Objects.Transform>(cand))
+                        {
+                            candPos = em.GetComponentData<Game.Objects.Transform>(cand).m_Position;
+                        }
+                        else if (em.HasComponent<Curve>(cand))
+                        {
+                            Bezier4x3 c = em.GetComponentData<Curve>(cand).m_Bezier;
+                            candPos = 0.125f * c.a + 0.375f * c.b + 0.375f * c.c + 0.125f * c.d;
+                        }
+                        else
+                        {
+                            continue;
+                        }
+
+                        if (math.distancesq(candPos, rec.Position) > maxDistSq)
+                        {
+                            continue;
+                        }
+
+                        matchCount++;
+                        if (matchCount > 1)
+                        {
+                            return false;
+                        }
+                        matched = cand;
+                    }
+                }
+            }
+            finally
+            {
+                query.Dispose();
+            }
+
+            if (matchCount == 1 && matched != Entity.Null)
+            {
+                resolved = matched;
+                return true;
+            }
+            return false;
+        }
+
         private static void ExecuteDeleteCreatedPhase(
             EntityManager em,
             EntityCommandBuffer ecb,
@@ -2388,18 +2494,42 @@ namespace MarqueeDelete
             skipped = 0;
             var liveRoots = new List<Entity>(tx.CreatedEntities.Count);
             var parentOwnersToRefresh = new HashSet<Entity>();
+            var resolvedClaimed = new HashSet<Entity>();
+
+            for (int i = 0; i < tx.CreatedEntities.Count; i++)
+            {
+                Entity existing = tx.CreatedEntities[i].Entity;
+                if (existing != Entity.Null && em.Exists(existing) && !em.HasComponent<Deleted>(existing))
+                {
+                    resolvedClaimed.Add(existing);
+                }
+            }
 
             for (int i = 0; i < tx.CreatedEntities.Count; i++)
             {
                 CreatedEntityRecord rec = tx.CreatedEntities[i];
-                if (rec.Entity == Entity.Null || !em.Exists(rec.Entity) || em.HasComponent<Deleted>(rec.Entity) ||
-                    IsHardProtected(em, rec.Entity))
+                Entity target = rec.Entity;
+                if (target == Entity.Null || !em.Exists(target) || em.HasComponent<Deleted>(target))
+                {
+                    if (rec.Prefab != Entity.Null && em.Exists(rec.Prefab) &&
+                        TryResolveRebuiltCreatedEntity(em, in rec, resolvedClaimed, out Entity rebuiltEntity))
+                    {
+                        target = rebuiltEntity;
+                    }
+                    else
+                    {
+                        skipped++;
+                        continue;
+                    }
+                }
+                else if (IsHardProtected(em, target))
                 {
                     skipped++;
                     continue;
                 }
 
-                liveRoots.Add(rec.Entity);
+                resolvedClaimed.Add(target);
+                liveRoots.Add(target);
                 if (rec.HasOwner && rec.OwnerEntity != Entity.Null &&
                     em.Exists(rec.OwnerEntity) && !em.HasComponent<Deleted>(rec.OwnerEntity))
                 {
